@@ -1,0 +1,13 @@
+# Curated allowlist of event/activity sources to monitor.
+# Copy to sources.yaml and add the pages you want to track.
+# Only sites listed here are ever fetched. Respect each site's terms of service.
+#
+# TIP: prefer a structured FEED (JSON / iCal / RSS) over a human HTML page when one
+# exists — it's far more reliable and skips the LLM entirely. JS-rendered calendars
+# (like events.brown.edu) return almost nothing via plain scraping.
+#   - Brown's calendar is handled specially via ingest_livewhale_events() (LiveWhale JSON).
+#   - The `sources` list below is for UNSTRUCTURED pages that go through the LLM extractor.
+
+sources:
+  # - https://today.brown.edu/announcements           # static page with text in the HTML
+  # - https://www.goprovidence.com/events/            # local activities
