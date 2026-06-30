@@ -13,12 +13,14 @@ FastAPI endpoint, and the frontend never duplicate it. They just call `curate_ra
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from . import telemetry
 from .curate import enrich_events, filter_by_target
 from .dedupe import dedupe_events
 from .ingest import ingest_livewhale_events
 from .models import Event, Target
+from .telemetry import UsageSummary
 
 
 @dataclass
@@ -31,6 +33,7 @@ class CurationResult:
     raw_count: int            # dated instances pulled from the feed
     unique_count: int         # after dedupe
     enriched_count: int       # actually enriched (after any cap)
+    usage: UsageSummary | None = field(default=None)  # token/cost stats for this run
 
 
 def resolve_month_range(month: str) -> tuple[str, str]:
@@ -103,7 +106,11 @@ def curate_range(
     - `pull_cap`   : cap raw instances fetched (None = all in range; the feed bounds it).
     - `max_enrich` : cap unique events enriched, to control LLM cost (None = all).
     - `max_workers`: enrichment concurrency (see ADR-0006).
+
+    Resets telemetry at the start so `result.usage` reflects only this run's LLM cost.
     """
+    telemetry.reset()
+
     raw = ingest_livewhale_events(
         base_url=base_url, start_date=start_date, end_date=end_date, max_events=pull_cap
     )
@@ -126,4 +133,5 @@ def curate_range(
         raw_count=len(raw),
         unique_count=len(unique),
         enriched_count=len(enriched),
+        usage=telemetry.summarize(),
     )

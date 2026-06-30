@@ -3,6 +3,8 @@
 > Status: **Wave A MVP — Streamlit live, pilot pending** · Owner: Ke · Last updated: 2026-06-27
 > Track: **Real-world / work project** (separate from the personal-interest zero-proof trio)
 
+"Cut monthly newsletter prep from ~3 hours of manually scanning and de-duplicating the campus calendar to ~15 minutes of focused review — and surfaced relevant events I'd previously miss to scrolling fatigue."
+
 A productivity + creativity tool for my graduate assistantship at **Brown University**, where I help with **event planning for the grad community** and **produce the monthly grad newsletter** (gathering on/off-campus events, and reaching out to organizations to inquire about theirs).
 
 **Why this project is special:** it has **real users from day one** — me, fellow GAs, the event-planning team, and ultimately every grad student who reads the newsletter. That makes it the strongest possible portfolio piece *and* genuinely useful at work.

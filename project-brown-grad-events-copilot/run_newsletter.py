@@ -20,6 +20,7 @@ import argparse
 import calendar
 from pathlib import Path
 
+from backend import telemetry
 from backend.newsletter import (
     events_from_cache_for_month,
     load_selection,
@@ -125,6 +126,7 @@ def main() -> None:
         for t in draft.unmatched_titles:
             print(f"    - {t}")
     print("  Review blurbs → copy-paste into the shared Google Doc.")
+    telemetry.print_summary(prefix="  ")
 
 
 if __name__ == "__main__":

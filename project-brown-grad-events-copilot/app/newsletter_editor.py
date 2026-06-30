@@ -9,11 +9,10 @@ enrichment (~30s for a full month). Requires .env with OPENAI_API_KEY (or Anthro
 
 from __future__ import annotations
 
-import calendar
 import json
-import re
 import sys
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import streamlit as st
@@ -25,12 +24,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.models import Event  # noqa: E402
-from backend.newsletter import build_draft_from_blurbs, generate_blurbs, render_newsletter  # noqa: E402
-from backend.pipeline import curate_range, default_grad_target, resolve_month_range  # noqa: E402
+from backend.newsletter import (  # noqa: E402
+    build_draft_from_blurbs,
+    generate_blurbs,
+    improve_blurb,
+    render_newsletter,
+)
+from backend.pipeline import curate_range, default_grad_target  # noqa: E402
 from backend.report import format_relevance_summary, format_when, group_into_sections  # noqa: E402
 
 CACHE_PATH = ROOT / "data" / "output" / "enriched_events.json"
-_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 @dataclass
@@ -42,54 +45,57 @@ class PoolVisibility:
     filters_active: bool
 
 
-def _month_label(month: str) -> str:
-    year, mon = (int(x) for x in month.split("-"))
-    return f"{calendar.month_name[mon]} {year}"
+def _default_range() -> tuple[date, date]:
+    """Newsletter goes out mid-month and covers ~mid-month to mid-next-month."""
+    today = date.today()
+    start = today.replace(day=15)
+    if today.month == 12:
+        end = date(today.year + 1, 1, 15)
+    else:
+        end = date(today.year, today.month + 1, 15)
+    return start, end
 
 
-def _validate_month(month: str) -> str | None:
-    month = month.strip()
-    if not _MONTH_RE.match(month):
-        return "Use YYYY-MM format (e.g. 2026-08)."
-    return None
+def _range_label(start: date, end: date) -> str:
+    if start.year == end.year:
+        return f"{start:%b %-d} – {end:%b %-d, %Y}"
+    return f"{start:%b %-d, %Y} – {end:%b %-d, %Y}"
 
 
 def _init_state() -> None:
     defaults = {
-        "month": "2026-07",
-        "loaded_month": "",
+        "loaded_span": "",
         "pool": [],
         "selected": set(),
         "blurbs": {},
         "span": "",
-        "month_label": "",
+        "range_label": "",
         "last_fetch_note": "",
     }
     for key, val in defaults.items():
         st.session_state.setdefault(key, val)
 
 
-def _set_pool(month: str, pool: list[Event], *, note: str = "") -> None:
-    start, end = resolve_month_range(month)
+def _set_pool(start: date, end: date, pool: list[Event], *, note: str = "") -> None:
+    span = f"{start.isoformat()} → {end.isoformat()}"
     st.session_state.pool = pool
-    st.session_state.span = f"{start} → {end}"
-    st.session_state.month_label = _month_label(month)
-    st.session_state.month = month
-    st.session_state.loaded_month = month
+    st.session_state.span = span
+    st.session_state.range_label = _range_label(start, end)
+    st.session_state.loaded_span = span
     st.session_state.selected = set()
     st.session_state.blurbs = {}
     st.session_state.last_fetch_note = note
 
 
-def _fetch_month(month: str, *, workers: int, save_cache: bool) -> list[Event]:
-    """LiveWhale ingest + dedupe + LLM enrich for the requested month."""
-    start, end = resolve_month_range(month)
-    target = default_grad_target(start, end, min_relevance=0.0)
+def _fetch_range(start: date, end: date, *, workers: int, save_cache: bool) -> list[Event]:
+    """LiveWhale ingest + dedupe + LLM enrich for the requested date range."""
+    start_iso, end_iso = start.isoformat(), end.isoformat()
+    target = default_grad_target(start_iso, end_iso, min_relevance=0.0)
     result = curate_range(
-        start,
-        end,
+        start_iso,
+        end_iso,
         target=target,
-        max_enrich=None,  # enrich every unique event in the month (no silent cap)
+        max_enrich=None,  # enrich every unique event in range (no silent cap)
         max_workers=workers,
     )
     if save_cache:
@@ -104,7 +110,9 @@ def _fetch_month(month: str, *, workers: int, save_cache: bool) -> list[Event]:
         f"Fetched live · {result.raw_count} calendar instances → "
         f"{result.unique_count} unique → {len(result.events)} in your pool"
     )
-    _set_pool(month, result.events, note=note)
+    if result.usage and result.usage.calls > 0:
+        note += f" · {result.usage}"
+    _set_pool(start, end, result.events, note=note)
     return result.events
 
 
@@ -243,9 +251,14 @@ def _render_select_row(ev: Event, section_name: str, index: int) -> None:
         with thumb_col:
             st.image(ev.image_url, width=72)
     with title_col:
+        # Title stays plain text (a blue clickable title is distracting); the curator
+        # verifies the event via the separate "View event page" link below.
         st.markdown(f"**{ev.title}**")
         st.caption(_event_card(ev))
         st.markdown(f"_{format_relevance_summary(ev)}_")
+        link = ev.event_page_url() or ev.registration_url
+        if link:
+            st.markdown(f"[↗ View event page]({link})")
 
     if checked:
         st.session_state.selected.add(ev.title)
@@ -253,12 +266,18 @@ def _render_select_row(ev: Event, section_name: str, index: int) -> None:
         st.session_state.selected.discard(ev.title)
 
 
-def _render_sidebar() -> tuple[str, int, bool]:
-    st.sidebar.title("Month")
-    month = st.sidebar.text_input(
-        "YYYY-MM",
-        value=st.session_state.month,
-        help="e.g. 2026-08 for August. Then click Fetch below.",
+def _render_sidebar() -> tuple[date, date, int, bool]:
+    st.sidebar.title("Date range")
+    st.sidebar.caption(
+        "The newsletter goes out mid-month and covers ~mid-month to mid-next-month. "
+        "Pick the window you're publishing for."
+    )
+    def_start, def_end = _default_range()
+    start = st.sidebar.date_input(
+        "From", value=def_start, key="start_date", format="YYYY-MM-DD"
+    )
+    end = st.sidebar.date_input(
+        "To", value=def_end, key="end_date", format="YYYY-MM-DD"
     )
 
     enrich_workers = st.sidebar.slider(
@@ -266,7 +285,7 @@ def _render_sidebar() -> tuple[str, int, bool]:
         1,
         16,
         8,
-        help="Parallel LLM calls when fetching a month. Larger months take longer.",
+        help="Parallel LLM calls when fetching. Larger ranges take longer.",
     )
     save_cache = st.sidebar.toggle(
         "Save to disk after fetch",
@@ -274,17 +293,18 @@ def _render_sidebar() -> tuple[str, int, bool]:
         help=f"Writes {CACHE_PATH.name} so run_curate.py can reuse it.",
     )
 
-    if st.sidebar.button("Fetch events for this month", type="primary", use_container_width=True):
-        err = _validate_month(month)
-        if err:
-            st.sidebar.error(err)
+    if st.sidebar.button(
+        "Fetch events for this range", type="primary", use_container_width=True
+    ):
+        if end < start:
+            st.sidebar.error("'To' date must be on or after 'From' date.")
         else:
-            with st.spinner(f"Fetching {month} from calendar + enriching… (may take ~1 min)"):
+            with st.spinner(f"Fetching {start} → {end} + enriching… (may take ~1 min)"):
                 try:
-                    pool = _fetch_month(
-                        month, workers=enrich_workers, save_cache=save_cache
+                    pool = _fetch_range(
+                        start, end, workers=enrich_workers, save_cache=save_cache
                     )
-                    st.sidebar.success(f"Loaded {len(pool)} events for {month}.")
+                    st.sidebar.success(f"Loaded {len(pool)} events.")
                 except Exception as exc:  # noqa: BLE001
                     st.sidebar.error(f"Fetch failed: {exc}")
 
@@ -294,23 +314,23 @@ def _render_sidebar() -> tuple[str, int, bool]:
 
     st.sidebar.divider()
     st.sidebar.caption(
-        "Changing the month does not auto-refresh. Click **Fetch events for this month** "
-        "to load a new month from the live calendar."
+        "Changing the dates does not auto-refresh. Click **Fetch events for this range** "
+        "to reload from the live calendar."
     )
 
     use_llm = st.sidebar.toggle("LLM blurbs", value=True)
     blurb_workers = st.sidebar.slider("Blurb workers", 1, 16, 8)
 
-    return month, blurb_workers, use_llm
+    return start, end, blurb_workers, use_llm
 
 
 def _render_select_tab(
     filtered: list[Event],
     stats: PoolVisibility,
     *,
-    month_input: str,
+    current_span: str,
 ) -> None:
-    st.subheader("Pick events for this month's draft")
+    st.subheader("Pick events for this draft")
     st.caption(
         "You are the aggregator — check what belongs in the newsletter. "
         "Editorial highlights happen later in Google Docs."
@@ -318,16 +338,16 @@ def _render_select_tab(
 
     if not st.session_state.pool:
         st.info(
-            "Enter a month in the sidebar (e.g. **2026-08**) and click "
-            "**Fetch events for this month** to load events from the live calendar."
+            "Set a **From / To** date range in the sidebar and click "
+            "**Fetch events for this range** to load events from the live calendar."
         )
         return
 
-    if month_input.strip() != st.session_state.loaded_month:
+    if st.session_state.loaded_span and current_span != st.session_state.loaded_span:
         st.warning(
-            f"You typed **{month_input.strip()}** but the list shows "
-            f"**{st.session_state.loaded_month}** ({st.session_state.month_label}). "
-            "Click **Fetch events for this month** in the sidebar to switch months."
+            f"You changed the dates, but the list still shows "
+            f"**{st.session_state.range_label}**. Click **Fetch events for this range** "
+            "in the sidebar to reload."
         )
 
     _render_pool_summary(stats)
@@ -377,12 +397,30 @@ def _render_draft_tab(workers: int, use_llm: bool) -> None:
                 blurb_key = f"blurb_{hash(ev.title) & 0xFFFFFF}"
                 if blurb_key not in st.session_state and ev.title in st.session_state.blurbs:
                     st.session_state[blurb_key] = st.session_state.blurbs[ev.title]
+
+                # Proofread / improve the current blurb. Button is above the text_area, so
+                # writing blurb_key here happens before the widget is instantiated (allowed).
+                if st.button(
+                    "✨ Improve writing",
+                    key=f"improve_{hash(ev.title) & 0xFFFFFF}",
+                    help="Proofread + lightly rewrite this blurb in the newsletter voice.",
+                ):
+                    current = st.session_state.get(blurb_key) or st.session_state.blurbs.get(ev.title, "")
+                    if current.strip():
+                        with st.spinner("Improving…"):
+                            improved = improve_blurb(current, ev)
+                        st.session_state[blurb_key] = improved
+                        st.session_state.blurbs[ev.title] = improved
+                        st.rerun()
+                    else:
+                        st.caption("Write or generate a blurb first.")
+
                 blurb = st.text_area(
                     "Blurb",
                     height=80,
                     key=blurb_key,
                     label_visibility="collapsed",
-                    placeholder="One-sentence newsletter blurb…",
+                    placeholder="Newsletter blurb — 2-3 warm sentences…",
                 )
                 if blurb.strip():
                     st.session_state.blurbs[ev.title] = blurb.strip()
@@ -392,7 +430,7 @@ def _render_draft_tab(workers: int, use_llm: bool) -> None:
             events,
             st.session_state.blurbs,
             st.session_state.span,
-            st.session_state.month_label,
+            st.session_state.range_label,
         )
         md = render_newsletter(draft)
         st.divider()
@@ -401,7 +439,7 @@ def _render_draft_tab(workers: int, use_llm: bool) -> None:
         st.download_button(
             "Download markdown",
             data=md,
-            file_name=f"newsletter_{st.session_state.month}.md",
+            file_name=f"newsletter_{st.session_state.span.replace(' → ', '_')}.md",
             mime="text/markdown",
             use_container_width=True,
         )
@@ -419,10 +457,11 @@ def main() -> None:
 
     st.title("Grad Events Newsletter")
     st.caption(
-        "Pick a month → fetch live from calendar → select events → blurbs → paste into Google Doc"
+        "Pick a date range → fetch live from calendar → select events → blurbs → paste into Google Doc"
     )
 
-    month_input, blurb_workers, use_llm = _render_sidebar()
+    start, end, blurb_workers, use_llm = _render_sidebar()
+    current_span = f"{start.isoformat()} → {end.isoformat()}"
 
     query = st.text_input("Search events", placeholder="career, wellness, Fulbright…")
     filt_col1, filt_col2 = st.columns(2)
@@ -447,7 +486,7 @@ def main() -> None:
 
     tab_select, tab_draft = st.tabs(["Select events", "Blurbs & export"])
     with tab_select:
-        _render_select_tab(filtered, stats, month_input=month_input)
+        _render_select_tab(filtered, stats, current_span=current_span)
     with tab_draft:
         _render_draft_tab(blurb_workers, use_llm)
 

@@ -82,7 +82,7 @@ def extract_events(item: SourceItem, *, verify_evidence: bool = True) -> list[Ev
     """
     user = _build_user_prompt(item)
 
-    raw = complete_json(SYSTEM_PROMPT, user)
+    raw = complete_json(SYSTEM_PROMPT, user, label="extract")
     try:
         result = _parse(raw)
     except (json.JSONDecodeError, ValidationError) as err:
@@ -94,7 +94,7 @@ def extract_events(item: SourceItem, *, verify_evidence: bool = True) -> list[Ev
             "Return ONLY a corrected JSON object matching the required schema. "
             "Remember the grounding rules: unknown fields must be null."
         )
-        raw = complete_json(SYSTEM_PROMPT, repair_user)
+        raw = complete_json(SYSTEM_PROMPT, repair_user, label="extract-repair")
         result = _parse(raw)  # if this still fails, let it raise — that's a real signal
 
     events: list[Event] = []

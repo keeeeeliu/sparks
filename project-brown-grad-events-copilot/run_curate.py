@@ -20,6 +20,7 @@ import json
 import time
 from pathlib import Path
 
+from backend import telemetry
 from backend.pipeline import (
     curate_range,
     default_grad_target,
@@ -124,7 +125,10 @@ def main() -> None:
     if result.unique_count > result.enriched_count:
         print(f"  NOTE: capping enrichment at --max {args.max} of {result.unique_count} unique "
               "(raise --max to cover the whole month).")
-    print(f"  done in {elapsed:.1f}s ({elapsed / max(result.enriched_count, 1):.2f}s/event avg).\n")
+    print(f"  done in {elapsed:.1f}s ({elapsed / max(result.enriched_count, 1):.2f}s/event avg).")
+    if result.usage and result.usage.calls > 0:
+        telemetry.print_summary(prefix="  ")
+    print()
 
     ranked = result.events
     n_masters = sum(e.is_masters_facing() for e in ranked)

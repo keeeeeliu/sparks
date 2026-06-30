@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "description": "Hand-labeled ground truth for enrichment accuracy eval",
+  "seed": 42,
+  "source_cache": "/Users/keliu/Desktop/creativeApp/project-brown-grad-events-copilot/data/output/enriched_events.json",
+  "events": [
+    {
+      "title": "Pathobiology Thesis Defense: Rebecca Yunker",
+      "ground_truth": {
+        "grad_facing": true,
+        "masters_facing": false,
+        "category": "academic",
+        "relevance_bucket": "high"
+      },
+      "notes": "",
+      "_cached_audience": [
+        "graduate",
+        "doctoral"
+      ],
+      "_cached_relevance": 0.8,
+      "_cached_category": "academic"
+    },
+    {
+      "title": "RI-AI4H 2026 Data Challenge and Datathon",
+      "ground_truth": {
+        "grad_facing": true,
+        "masters_facing": false,
+        "category": "professional",
+        "relevance_bucket": "high"
+      },
+      "notes": "",
+      "_cached_audience": [
+        "graduate"
+      ],
+      "_cached_relevance": 0.8,
+      "_cached_category": "professional"
+    },
+    {
+      "title": "NSO 2026 Summer Group Advising Session: 6/25/2026 at 10am EST",
+      "ground_truth": {
+        "grad_facing": false,
+        "masters_facing": false,
+        "category": "other",
+        "relevance_bucket": "low"
+      },
+      "notes": "",
+      "_cached_audience": [
+        "unspecified"
+      ],
+      "_cached_relevance": 0.1,
+      "_cached_category": "other"
+    },
+    {
+      "title": "Pre-Approved to Homeowner (Webinar)",
+      "ground_truth": {
+        "grad_facing": false,
+        "masters_facing": false,
+        "category": "wellness",
+        "relevance_bucket": "mid"
+      },
+      "notes": "",
+      "_cached_audience": [
+        "graduate"
+      ],
+      "_cached_relevance": 0.6,
+      "_cached_category": "wellness"
+    },
+    {
+      "title": "Navigating Together: Empowering First-Generation College Families",
+      "ground_truth": {
+        "grad_facing": true,
+        "masters_facing": false,
+        "category": "wellness",
+        "relevance_bucket": "mid"
+      },
+      "notes": "",
+      "_cached_audience": [
+        "graduate"
+      ],
+      "_cached_relevance": 0.6,
+      "_cached_category": "other"
+    },
+    {
+      "title": "An Easy Guide to Your First 5K (Webinar)",
+      "ground_truth": {
+        "grad_facing": true,
+        "masters_facing": false,
+        "category": "wellness",
+        "relevance_bucket": "mid"
+      },
+      "notes": "",
+      "_cached_audience": [
+        "graduate"
+      ],
+      "_cached_relevance": 0.8,
+      "_cached_category": "wellness"
+    }
+  ]
+}

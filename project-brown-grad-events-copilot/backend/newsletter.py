@@ -32,18 +32,60 @@ from .report import SECTIONS, format_when, group_into_sections, section_of
 
 _SKIP_SECTIONS = {"Other / Administrative"}
 
-_BLURB_SYSTEM = """You write one-sentence blurbs for a Brown University graduate-student newsletter.
+_BLURB_SYSTEM = """You write blurbs for a Brown University graduate-student newsletter.
 
-Voice: warm, clear, concise — like a helpful peer, not corporate marketing. No clichés
-("Don't miss", "mark your calendars"). One sentence only, max ~30 words.
+VOICE — warm, welcoming, peer-to-peer, like a friendly grad-community team member talking to
+fellow students. Speak directly to the reader ("you", "your fellow students"). Convey why
+someone would actually want to go: the connection, fun, support, or progress they'll get.
 
-Ground rules: use ONLY facts from the event fields provided. Do not invent details.
+FORM — 2-3 short sentences (roughly 25-70 words). Many blurbs open with a light hook question
+("Looking for a fun way to connect with fellow master's students?") or a direct, inviting
+imperative ("Come by the U-FLi Center to catch up on reading, de-stress, or simply hang out.").
+Include one or two concrete, useful details when present in the event fields — what it is,
+when/where, or whether registration is required.
+
+AVOID — corporate-marketing clichés ("Don't miss", "mark your calendars", "elevate your
+experience"), hype, and emoji. Keep it natural and specific.
+
+Here are real blurbs in our newsletter's voice — match this tone and shape:
+
+EXAMPLE 1:
+"Looking for a fun way to connect with your fellow master's students? Join us for an afternoon
+of rock climbing and community building at Rock Spot Climbing, located at 42 Rice St, Providence."
+
+EXAMPLE 2:
+"Come by the U-FLi Center to catch up on reading, de-stress, or simply hang out. Stay as long
+as you like and drop in whenever you can — these weekly open hours are a space to be in community
+with fellow graduate and medical students."
+
+EXAMPLE 3:
+"Are you a graduate student looking to make progress on a writing project? Join the 14-Day Writing
+Challenge from the Sheridan Writing Center: set goals, write at least 30 minutes a day, and cheer
+on fellow writers. Primarily virtual, with optional in-person gatherings."
+
+EXAMPLE 4:
+"Connect with the graduate student deans over a hearty breakfast and discover resources designed
+to support your success at Brown, all while you network with fellow grad students. Registration
+is required."
+
+Use ONLY facts from the event fields provided. Do not invent details.
+
+Return JSON: {"blurb": "..."}"""
+
+
+_IMPROVE_SYSTEM = """You are an editor for a Brown University graduate-student newsletter.
+
+Improve the given blurb: fix grammar and awkward phrasing, tighten wordiness, and make it warm,
+clear, and natural in a peer-to-peer voice. Keep it to 2-3 short sentences.
+
+Do NOT add facts that aren't already in the text. Do NOT add clichés or emoji. Preserve all
+concrete details (dates, locations, registration notes) exactly.
 
 Return JSON: {"blurb": "..."}"""
 
 
 class _BlurbOut(BaseModel):
-    blurb: str = Field(..., min_length=5, max_length=280)
+    blurb: str = Field(..., min_length=5, max_length=600)
 
 
 @dataclass
@@ -142,11 +184,34 @@ def generate_blurb(ev: Event) -> str:
         f"HOST: {ev.host_org or 'unknown'}\n"
         f"DESCRIPTION:\n{(ev.description or '(none)')[:800]}"
     )
-    raw = complete_json(_BLURB_SYSTEM, user)
+    raw = complete_json(_BLURB_SYSTEM, user, label="blurb")
     try:
         return _BlurbOut.model_validate(json.loads(raw)).blurb.strip()
     except (json.JSONDecodeError, ValidationError):
         return fallback_blurb(ev)
+
+
+def improve_blurb(text: str, ev: Event | None = None) -> str:
+    """Proofread + lightly rewrite an existing (human-edited) blurb in the newsletter voice.
+
+    Grounded: instructed not to add facts beyond the text (event facts passed only as a
+    guardrail reference). Returns the original text unchanged on any failure.
+    """
+    if not text.strip():
+        return text
+    user = f"BLURB TO IMPROVE:\n{text.strip()}"
+    if ev is not None:
+        user += (
+            "\n\nReference event facts (do NOT introduce anything not already in the blurb):\n"
+            f"TITLE: {ev.title}\n"
+            f"WHEN: {format_when(ev)}\n"
+            f"HOST: {ev.host_org or 'unknown'}"
+        )
+    raw = complete_json(_IMPROVE_SYSTEM, user, label="improve")
+    try:
+        return _BlurbOut.model_validate(json.loads(raw)).blurb.strip()
+    except (json.JSONDecodeError, ValidationError):
+        return text
 
 
 def generate_blurbs(

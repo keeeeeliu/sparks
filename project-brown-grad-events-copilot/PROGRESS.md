@@ -7,7 +7,7 @@
 
 - **Project:** Wave A — Newsletter wedge (ingest → extract → dedupe → curate → draft)
 - **Owner:** Ke
-- **Last updated:** 2026-06-27 (Streamlit MVP + live fetch)
+- **Last updated:** 2026-06-30 (telemetry + eval harness; flexible date range; blurb voice tuning + Improve button)
 
 ---
 
@@ -19,7 +19,7 @@
 | 2. Batch-extract a real month of sources + dedupe | **Verified live (July: 331 instances → 105 unique; dedupe runs before enrichment)** |
 | 3. Relevance scoring + curation + first newsletter draft | **Newsletter draft generator live** (`backend/newsletter.py`, `run_newsletter.py`); pilot on real cycle not started |
 | 4. Editable frontend; pilot on a real cycle | **Streamlit MVP live** (`app/newsletter_editor.py`) — live fetch, select, relevance summaries, blurbs, export; **pilot not started** |
-| 5. Eval (extraction accuracy + newsletter quality) + write up time saved | Not started |
+| 5. Eval (extraction accuracy + newsletter quality) + write up time saved | **Harness built** (`eval/evaluate.py`, `eval/label_events.py`) — ground-truth labeling + pilot "time saved" number still needed |
 
 ---
 
@@ -61,6 +61,17 @@
 - `filter_by_target` (+ helpers) — **deterministic selection** on well-covered dimensions: date / department (`host_org`, 100%) / audience / topic + min_relevance, ranked by `grad_relevance`. Keeps `all`/`unspecified` events so borderline ones aren't silently dropped. *Verified live: audience_tags captured (13/40), department filter exact.*
 - `Event.audience_tags` now captures `event_types_audience` from the feed (raw hint; Brown has no "graduate" value). `Target.departments` filters on host org.
 
+### Blurb voice + Improve writing (`backend/newsletter.py`) — 2026-06-30
+- **Voice tuning:** `_BLURB_SYSTEM` rewritten from "one sentence, ~30 words" to the team's ACTUAL
+  voice — warm/peer-to-peer, 2–3 sentences (~25–70 words), often opening with a hook question or
+  inviting imperative, with **4 real past-newsletter blurbs as few-shot examples**. The old
+  one-sentence constraint was why generated blurbs "sounded weird." `_BlurbOut` max_length 280 → 600.
+- **`improve_blurb(text, ev=None)`** — proofread + lightly rewrite an existing (human-edited) blurb
+  in the newsletter voice. Grounded (won't add facts beyond the text; event facts passed only as a
+  guardrail). Returns the original unchanged on failure. Labeled `"improve"` in telemetry.
+- **Streamlit:** each blurb in the draft tab now has an **✨ Improve writing** button (rewrites in
+  place via `st.session_state` + `st.rerun()`).
+
 ### Newsletter draft (`backend/newsletter.py`) — copy-paste for shared Google Doc
 - **Workflow doc:** [`docs/workflow.md`](docs/workflow.md) — roles, pipeline, human verdict gate, Streamlit-first steps.
 - **Primary workflow (UI):** [`app/newsletter_editor.py`](../app/newsletter_editor.py) — fetch month live → checkbox selection → relevance summaries → blurbs → export markdown. No "Don't Miss" block — editorial highlighting happens in Google Docs.
@@ -69,11 +80,15 @@
 - **`build_draft_from_blurbs`**, **`prepare_draft_from_selection`** — human picks only; selected events included in all sections (incl. Other).
 - **`run_newsletter.py`** — loads cache or uses selection YAML. *Verified: 8 selected → ~3s blurbs.*
 
-### Streamlit UI (`app/newsletter_editor.py`) — 2026-06-27
-- **Live fetch:** sidebar month + **Fetch events for this month** → `curate_range(..., max_enrich=None)` (enriches **all** unique events; no silent cap).
+### Streamlit UI (`app/newsletter_editor.py`) — 2026-06-27, updated 2026-06-30
+- **Flexible date range (2026-06-30):** sidebar now has **From / To** `date_input` pickers (was a
+  YYYY-MM month box), defaulting to the **15th-to-15th** window — because the newsletter publishes
+  mid-month and covers ~mid-month to mid-next-month (see [[newsletter-coverage-window]] memory).
+  Backend always supported arbitrary ISO ranges; only the UI was forcing calendar months.
+- **Live fetch:** **Fetch events for this range** → `curate_range(..., max_enrich=None)` (enriches **all** unique events; no silent cap). Fetch note now shows token/cost estimate (telemetry).
 - **Browse:** all events by section; `format_relevance_summary()` on each row; thumbnails + links on draft tab.
 - **Select:** checkboxes (human verdict); optional search / master's-only / min-relevance filters.
-- **Export:** generate/edit blurbs, download markdown. No YAML in UI.
+- **Export:** generate/edit blurbs, **✨ Improve writing** button per blurb, download markdown. No YAML in UI.
 - *Verified live: May/June/July/August 2026 fetches; August required `cost` int→string fix at ingest.*
 
 ### LLM wrapper (`backend/llm.py`)
@@ -82,6 +97,24 @@
 ### Extraction (`backend/extract.py`)
 - `extract_events(item)` — grounded prompt → JSON → Pydantic validate → **one repair retry** on failure.
 - **Evidence verifier** `_evidence_in_source` drops any event whose quoted evidence isn't actually in the source (whitespace/case-normalized containment). *Verified: real quote passes, fabricated quote rejected.*
+
+### Telemetry (`backend/telemetry.py`) — 2026-06-30
+- **In-process LLM cost + latency tracker.** Thread-safe (required: `enrich_events` is concurrent). Records `label`, `model`, `tokens_in`, `tokens_out`, `latency_ms` per call.
+- `complete_json` now accepts a `label` param (`"enrich"`, `"extract"`, `"blurb"`, `"enrich-repair"`, `"extract-repair"`) — lets the summary break down cost by call type.
+- `curate_range` calls `telemetry.reset()` at the start → `CurationResult.usage` is a `UsageSummary` snapshot for that run only.
+- **Streamlit UI** (`_fetch_month`) appends `result.usage` to the fetch note (e.g. *"105 LLM calls · 48,320 in / 12,410 out tokens · 27.4s wall · est. $0.0218"*).
+- **CLI scripts** (`run_curate.py`, `run_newsletter.py`) print a per-label breakdown after each run.
+- Cost table: approximate mid-2026 pricing for `gpt-4o-mini`, `gpt-4o`, `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8` — update `_COST_PER_M` if pricing changes.
+
+### Eval harness (`eval/`) — 2026-06-30
+- **Two-mode design:** *consistency eval* (no labeling needed) and *accuracy eval* (hand-labeled ground truth).
+- `eval/evaluate.py` — main eval script:
+  - **Consistency mode** (default): re-enriches a random sample from `enriched_events.json`, compares new output to the previous run's output. Detects prompt/model drift without any manual labeling. `python eval/evaluate.py --n 25`.
+  - **Accuracy mode**: compares against `eval/labeled_events.json`. `python eval/evaluate.py --labels eval/labeled_events.json`.
+  - Metrics: grad-facing accuracy, masters-facing accuracy, category exact match, relevance bucket (high/mid/low) match. Reports telemetry cost of the eval run.
+- `eval/label_events.py` — interactive labeling CLI: walks through a random sample of cached events, shows cached enrichment, lets you confirm or correct each label, saves to `eval/labeled_events.json`. Supports `--append` to grow the label set over time.
+- `eval/labeled_events.json` — empty starter (0 events). Run `python eval/label_events.py --n 25` to populate.
+- **Why consistency eval first:** it runs immediately (no labeling), catches regressions if you change the enrichment prompt or switch models, and gives you a baseline before investing in ground-truth labeling.
 
 ### Tooling / scaffolding
 - `requirements.txt`, `.env.example`, `.gitignore`, `sources.example.yaml`.
@@ -115,15 +148,21 @@
 2. **One global ranking vs. ranking BY CATEGORY/purpose.** **Leaning confirmed for UI + newsletter:** sectioned-by-purpose (Career / Academic / Wellness / Arts / Social / Other). UI browse order follows sections, not global score — see [`docs/workflow.md`](docs/workflow.md). Eval may still revisit whether absolute `grad_relevance` adds value within sections.
 
 ### Immediate next (recommended order)
-> Reordered 2026-06-27: newsletter draft generator DONE.
-> **Next: pilot in Google Doc + voice tuning.** Vision path still deferred.
+> Reordered 2026-06-30: telemetry + eval harness DONE.
+> **Next: pilot → label → run eval → record time-saved number.**
 
 1. ~~**Newsletter draft (selection-driven)**~~ **DONE (2026-06-27)**
 2. ~~**Streamlit MVP**~~ **DONE (2026-06-27)** — `app/newsletter_editor.py` (live fetch, checkboxes, relevance summaries, blurbs, export).
-3. **Pilot paste** into real Google Doc using UI output.
-5. **Dedupe upgrade** — fuzzy/cross-source matching (embeddings) when non-LiveWhale sources come online.
-6. **Vision path** for scanned/image-only flyers (`SourceType.IMAGE` → vision model). *(Deferred.)*
-7. **Scheduled web monitor** — APScheduler/cron over `sources.yaml`, *only after extraction is trusted via eval*.
+3. ~~**Telemetry (cost + latency)**~~ **DONE (2026-06-30)** — `backend/telemetry.py`; `CurationResult.usage`; CLI + UI display.
+4. ~~**Eval harness**~~ **DONE (2026-06-30)** — `eval/evaluate.py` (consistency + accuracy modes); `eval/label_events.py`.
+5. ~~**Flexible date range**~~ **DONE (2026-06-30)** — From/To pickers, 15th-to-15th default.
+6. ~~**Voice tuning**~~ **DONE (2026-06-30)** — real voice + 4 few-shot examples in `_BLURB_SYSTEM`; `improve_blurb` + ✨ button.
+7. **Pilot paste** into real Google Doc using UI output → record time saved before/after (qualitative result already in: hours → minutes, less distraction).
+8. **Label events** for accuracy eval: `python eval/label_events.py --n 25` → then `python eval/evaluate.py --labels eval/labeled_events.json`.
+9. **Next.js + FastAPI frontend** (greenlit 2026-06-30) — real designed UI to replace Streamlit; bake in date range + Improve button + (Wave B) approval gate. Needs an architecture/design plan.
+10. **Dedupe upgrade** — fuzzy/cross-source matching (embeddings) when non-LiveWhale sources come online.
+9. **Vision path** for scanned/image-only flyers (`SourceType.IMAGE` → vision model). *(Deferred.)*
+10. **Scheduled web monitor** — APScheduler/cron over `sources.yaml`, *only after extraction is trusted via eval*.
 
 ### Later (Wave B/C — out of scope for now)
 - Outreach assistant (LangGraph + approval gate). Live Gmail/IMAP inbox connector.
@@ -160,7 +199,7 @@ Smaller decisions not (yet) warranting a full ADR: email/newsletter = manual pas
 - **~~`host_org` HTML entities not decoded.~~ FIXED 2026-06-27.** Added `_clean_inline` (HTML-unescape + tag-strip + whitespace-collapse, returns None when empty) and applied it to `title`, `host_org`, and `location` at ingest. `registration_url` also now `html.unescape`d (Eventbrite links came back with `&amp;`, which can break the link). `Alumni &amp; Friends` → `Alumni & Friends`; emoji entities in titles decoded. Verified live.
 - **~~DEDUPE IS NOW THE TOP UNBLOCKER...~~ RESOLVED 2026-06-27.** `backend/dedupe.py` now runs before enrichment: July 331 instances → 105 unique, enriched once each. Recurring/multi-day events show as a single entry with a duration span. Remaining dedupe gap: fuzzy/cross-source matching not done yet (see Dedupe section).
 - **`grad_relevance` still clusters at coarse values (0.8 / 0.4 / 0.1).** Holistic rubric rebalanced *across categories* (wellness/arts now ≈ career), but many events still land on the same 0.80, so within-tier ordering is weak. Master's-first + tiers is enough to highlight for now; eval should check whether finer scoring is worth prompting for. NOTE: scoring is non-deterministic enough that re-runs can shift a borderline event a tier — fine for a human-edited draft, worth knowing.
-- **Cost/latency untracked.** No Langfuse/tracing yet; batch extraction cost is unknown until measured.
+- **~~Cost/latency untracked.~~ RESOLVED (2026-06-30).** `backend/telemetry.py` records tokens + latency per call; `CurationResult.usage` summarizes per run; CLI + Streamlit display the estimate. Pricing table in `_COST_PER_M` — update if model pricing changes. No Langfuse yet (no persistent trace store), but per-run estimates are available immediately.
 - **Timezones.** `start`/`end` parsed as ISO strings by the model; no explicit TZ normalization. Could produce off-by-hours dates. Needs a normalization pass + eval check.
 - **Single repair retry only.** If the second attempt also fails, it raises — intentional (loud failure > silent garbage), but means a flaky source can hard-fail a batch run.
 - **No batch-level error isolation in `extract`.** `ingest_web_sources` catches per-URL fetch errors, but a per-item *extraction* failure in a future batch loop needs its own try/except so one bad source doesn't kill the run.

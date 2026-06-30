@@ -94,7 +94,7 @@ def enrich_event(event: Event) -> Event:
         f"DESCRIPTION:\n{event.description or '(no description)'}"
     )
 
-    raw = complete_json(_ENRICH_SYSTEM, user)
+    raw = complete_json(_ENRICH_SYSTEM, user, label="enrich")
     try:
         enr = _Enrichment.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValidationError) as err:
@@ -102,7 +102,7 @@ def enrich_event(event: Event) -> Event:
             f"{user}\n\nYour previous response was invalid:\n{type(err).__name__}: {err}\n\n"
             "Return ONLY a corrected JSON object matching the schema."
         )
-        enr = _Enrichment.model_validate(json.loads(complete_json(_ENRICH_SYSTEM, repair)))
+        enr = _Enrichment.model_validate(json.loads(complete_json(_ENRICH_SYSTEM, repair, label="enrich-repair")))
 
     updated = event.model_copy(deep=True)
     updated.audience = enr.audience or ["unspecified"]
