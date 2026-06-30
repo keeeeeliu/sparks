@@ -2,11 +2,12 @@
 
 > Living document. Append as you build. Newest entries at the top of each section.
 > Purpose: track **what's built, what's next, and current concerns** (the operational "where are we").
-> The **why behind decisions** lives in `docs/decisions/` (ADRs) — this file links to them.
+> The **newsletter workflow (human-in-the-loop)** is in [`docs/workflow.md`](docs/workflow.md).
+> The **why behind technical decisions** lives in `docs/decisions/` (ADRs) — this file links to them.
 
 - **Project:** Wave A — Newsletter wedge (ingest → extract → dedupe → curate → draft)
 - **Owner:** Ke
-- **Last updated:** 2026-06-27 (curation verified live)
+- **Last updated:** 2026-06-27 (Streamlit MVP + live fetch)
 
 ---
 
@@ -17,7 +18,7 @@
 | 1. Env + deps + LLM wrapper + `Event` schema; extract one event end-to-end | **Verified live (LiveWhale feed → 50 events; enrichment runs)** |
 | 2. Batch-extract a real month of sources + dedupe | **Verified live (July: 331 instances → 105 unique; dedupe runs before enrichment)** |
 | 3. Relevance scoring + curation + first newsletter draft | **Newsletter draft generator live** (`backend/newsletter.py`, `run_newsletter.py`); pilot on real cycle not started |
-| 4. Editable frontend; pilot on a real cycle | Not started |
+| 4. Editable frontend; pilot on a real cycle | **Streamlit MVP live** (`app/newsletter_editor.py`) — live fetch, select, relevance summaries, blurbs, export; **pilot not started** |
 | 5. Eval (extraction accuracy + newsletter quality) + write up time saved | Not started |
 
 ---
@@ -31,11 +32,11 @@
 - `ingest_pdf` — text-based PDFs via `pypdf`. *Not yet run on a real PDF.*
 - `ingest_web` — single URL → readable text via `httpx` + `trafilatura`. Now **warns when <200 chars extracted** (JS-rendered page → look for a feed). *Verified: returns ~empty on JS calendars, as expected.*
 - `ingest_web_sources` / `load_web_sources` — fetch every URL in the curated `sources.yaml`. Seed of the future scheduled monitor. *Not yet run.*
-- `ingest_livewhale_events` (+ `build_livewhale_url`, `_html_to_text`) — **structured LiveWhale JSON feed → `Event` directly, no LLM.** Supports group/tag/date filters, **follows pagination via `links.next`** with a `max_events` safety cap (default 200), skips canceled events, strips HTML, maps `registration` → `registration_url` when present. *Verified live: paginates across pages, caps correctly (events.brown.edu has ~1,161 total / 233 pages).*
+- `ingest_livewhale_events` (+ `build_livewhale_url`, `_html_to_text`) — **structured LiveWhale JSON feed → `Event` directly, no LLM.** Supports group/tag/date filters, **follows pagination via `links.next`**, skips canceled events, strips HTML, maps `registration` → `registration_url`, **`thumbnail` → `image_url`**, coerces numeric **`cost` → string**. *Verified live on May–August 2026.*
 
 ### Schemas (`backend/models.py`)
 - `SourceItem`, `SourceType` (paste/pdf/image/email/newsletter/web).
-- `Event` — README schema **+ provenance fields** (`source_ref`, `evidence`, `extraction_confidence`) **+ enrichment fields** (`audience`, `audience_evidence`). Most fields `Optional` so unknowns stay null instead of being invented.
+- `Event` — README schema **+ provenance fields** (`source_ref`, `evidence`, `extraction_confidence`) **+ enrichment fields** (`audience`, `audience_evidence`, `relevance_reasoning`, `image_url`). Most fields `Optional` so unknowns stay null instead of being invented.
 - `Target` — the personalization primitive: audience/categories/keywords/date-range/min_relevance. Powers newsletter sections, agent queries, notifications. *Verified.*
 - `ExtractionResult` — `{ events: [...] }` wrapper the LLM returns. *Verified.*
 
@@ -50,7 +51,7 @@
 - **`run_curate.py` is now a thin CLI wrapper** over this module (refactored 2026-06-27 so the frontend/API won't re-implement the flow).
 
 ### Presentation / sectioning (`backend/report.py`) — shared grouping for all views
-- **`SECTIONS`**, **`group_into_sections`**, **`render_markdown`**, **`write_markdown_report`**, **`format_when`** — one source of truth for how events are grouped by purpose (Career, Academic, Wellness, Arts, Social, Other). The Markdown report, future newsletter draft, and UI should all call this — not re-implement section logic.
+- **`SECTIONS`**, **`group_into_sections`**, **`render_markdown`**, **`write_markdown_report`**, **`format_when`**, **`format_relevance_summary`** — one source of truth for section grouping and the curated-report relevance line (UI reuses `format_relevance_summary`).
 - **`Event.is_masters_facing()` / `is_grad_facing()`** on the model — shared audience flags for ranking + display.
 
 ### Curation (`backend/curate.py`) — hybrid (ADR-0005)
@@ -61,9 +62,19 @@
 - `Event.audience_tags` now captures `event_types_audience` from the feed (raw hint; Brown has no "graduate" value). `Target.departments` filters on host org.
 
 ### Newsletter draft (`backend/newsletter.py`) — copy-paste for shared Google Doc
-- **`prepare_draft` / `render_newsletter`** — editor-facing (no scores): **Don't Miss** highlights + sectioned events with one-line blurbs + links + `[Add image if available]` placeholders.
-- **`run_newsletter.py`** — loads cached `enriched_events.json` by default (no re-enrichment); `--no-llm` for fast description-based blurbs; `--refresh` to re-curate. Output: `data/output/newsletter_<range>.md`.
-- Uses `report.group_into_sections` + `pipeline.rank_for_newsletter` — same grouping as curated report. Skips **Other / Administrative**; default `min_relevance=0.4`, max 6/section, 8 highlights. *Verified live July 2026 (~6s blurbs, 30 section events + 8 highlights).*
+- **Workflow doc:** [`docs/workflow.md`](docs/workflow.md) — roles, pipeline, human verdict gate, Streamlit-first steps.
+- **Primary workflow (UI):** [`app/newsletter_editor.py`](../app/newsletter_editor.py) — fetch month live → checkbox selection → relevance summaries → blurbs → export markdown. No "Don't Miss" block — editorial highlighting happens in Google Docs.
+- **CLI workflow:** `run_newsletter.py` + optional YAML selection (`data/selections/*.yaml`) for scripts.
+- **`EventSelection`** — `{ month, events: [titles] }`. Example: `data/selections/july_2026_example.yaml`.
+- **`build_draft_from_blurbs`**, **`prepare_draft_from_selection`** — human picks only; selected events included in all sections (incl. Other).
+- **`run_newsletter.py`** — loads cache or uses selection YAML. *Verified: 8 selected → ~3s blurbs.*
+
+### Streamlit UI (`app/newsletter_editor.py`) — 2026-06-27
+- **Live fetch:** sidebar month + **Fetch events for this month** → `curate_range(..., max_enrich=None)` (enriches **all** unique events; no silent cap).
+- **Browse:** all events by section; `format_relevance_summary()` on each row; thumbnails + links on draft tab.
+- **Select:** checkboxes (human verdict); optional search / master's-only / min-relevance filters.
+- **Export:** generate/edit blurbs, download markdown. No YAML in UI.
+- *Verified live: May/June/July/August 2026 fetches; August required `cost` int→string fix at ingest.*
 
 ### LLM wrapper (`backend/llm.py`)
 - `complete_json(system, user)` — provider-agnostic (OpenAI `json_object` mode / Anthropic prefill). `temperature=0.0` for deterministic extraction. *Not yet run with a live key.*
@@ -101,16 +112,15 @@
 
 ### Open design questions (to discuss — flagged by Ke 2026-06-27)
 1. **How should we SCORE events? (`grad_relevance` methodology.)** Current single 0–1 scalar conflates two things — *audience fit* ("is this for grad students?") and *appeal/quality* — which causes clustering at 0.80 and makes the number hard to interpret. Options to weigh: (a) keep one scalar but rank *within category*; (b) split into sub-scores (fit vs appeal); (c) listwise/pairwise LLM ranking instead of absolute scores. **Can't judge "right" without the eval harness** — so this is coupled to the eval task. Ke wants to revisit; no decision yet.
-2. **One global ranking vs. ranking BY CATEGORY/purpose.** Open question: a single ranked list forces incomparable events to compete (a datathon vs a journal-making workshop). Leaning toward **sectioned-by-purpose** (already prototyped in the `curated_*.md` report: Career & Professional / Academic & Research / Wellness & Well-being / Arts & Culture / Social & Community / Other). This also relieves pressure on the absolute score. To be confirmed when designing the newsletter.
+2. **One global ranking vs. ranking BY CATEGORY/purpose.** **Leaning confirmed for UI + newsletter:** sectioned-by-purpose (Career / Academic / Wellness / Arts / Social / Other). UI browse order follows sections, not global score — see [`docs/workflow.md`](docs/workflow.md). Eval may still revisit whether absolute `grad_relevance` adds value within sections.
 
 ### Immediate next (recommended order)
 > Reordered 2026-06-27: newsletter draft generator DONE.
 > **Next: pilot in Google Doc + voice tuning.** Vision path still deferred.
 
-1. ~~**Thin end-to-end slice → first newsletter draft**~~ **DONE (2026-06-27)** — `backend/newsletter.py` + `run_newsletter.py`. Next: **pilot paste into real Google Doc** + tune voice from a past newsletter example.
-2. **Eval harness** (`eval/labeled_events.json` + `eval/evaluate.py`) — hand-label ~10–15 real sources, measure field-accuracy + flag hallucinations; also sanity-check audience/grad_relevance judgments. Turns "I hope it's accurate" into a number.
-3. **Voice tuning** — paste 1 past newsletter section into `data/raw/newsletter_voice_example.txt`; refine blurb prompt (current blurbs lean "Join…" — workable v1).
-4. **Frontend** — editable newsletter preview (Streamlit MVP → Next.js later).
+1. ~~**Newsletter draft (selection-driven)**~~ **DONE (2026-06-27)**
+2. ~~**Streamlit MVP**~~ **DONE (2026-06-27)** — `app/newsletter_editor.py` (live fetch, checkboxes, relevance summaries, blurbs, export).
+3. **Pilot paste** into real Google Doc using UI output.
 5. **Dedupe upgrade** — fuzzy/cross-source matching (embeddings) when non-LiveWhale sources come online.
 6. **Vision path** for scanned/image-only flyers (`SourceType.IMAGE` → vision model). *(Deferred.)*
 7. **Scheduled web monitor** — APScheduler/cron over `sources.yaml`, *only after extraction is trusted via eval*.
@@ -132,7 +142,7 @@ Each major decision has an ADR with context, **evidence/data**, alternatives, an
 - **[ADR-0005](docs/decisions/0005-hybrid-tags-plus-llm-for-relevance.md)** — Hybrid: source tags as features for the LLM + deterministic filtering on well-covered dimensions; LLM judges grad-relevance (no grad audience tag exists).
 - **[ADR-0006](docs/decisions/0006-concurrent-per-event-enrichment.md)** — Concurrent per-event enrichment (not single-prompt batching): ~7.5× speedup (206.9s → 27.4s on 105 events); default `--workers 8`.
 
-Smaller decisions not (yet) warranting a full ADR: email/newsletter = manual paste for Wave A (defer OAuth/privacy); websites = curated allowlist (`sources.yaml`); `temperature=0.0` for determinism; provider-agnostic hand-rolled LLM wrapper (transparency/learning); **pipeline logic extracted to `backend/pipeline.py` + sectioning to `backend/report.py`** so CLI/API/UI share one code path (2026-06-27).
+Smaller decisions not (yet) warranting a full ADR: email/newsletter = manual paste for Wave A (defer OAuth/privacy); websites = curated allowlist (`sources.yaml`); `temperature=0.0` for determinism; provider-agnostic hand-rolled LLM wrapper; pipeline + report modules shared by CLI/UI (2026-06-27); **Streamlit as Wave A UI** (not Next.js yet); **no enrich cap in UI fetch** after June happy hour was silently dropped at `--max 110` (2026-06-27); **aggregator selects via UI checkboxes**, not YAML (YAML remains for CLI only).
 
 ---
 
@@ -143,7 +153,10 @@ Smaller decisions not (yet) warranting a full ADR: email/newsletter = manual pas
 - **`event_types_audience` is unreliable (department defaults).** Reproduced: 6 unrelated events share an identical audience set, and the values don't appear on the public event page. So the field is partly bulk department defaults, not per-event curation. Decision: still captured on `Event.audience_tags` for transparency, but **excluded from the enrichment prompt** so it can't mislead the LLM. Audience is judged from prose/title only. Full characterization: [data card](docs/data-sources/livewhale.md) (`python scripts/profile_livewhale.py`); decision: ADR-0005.
 - **PDF ingester unproven on real inputs.** `pypdf` fails silently on scanned/image PDFs (returns empty text) → need the vision path.
 - **Evidence verifier is a containment check, not semantic.** A model could quote a *real but irrelevant* sentence as "evidence." Mitigates fabrication, not misattribution. Eval is the real backstop.
-- **No dedupe yet** → re-fetching the same web page will produce duplicate events. Don't enable scheduled monitoring before dedupe exists. CONCRETE EXAMPLE: a 130-event LiveWhale pull had only 62 unique titles — recurring events (weekly meetings, multi-day exhibitions) come back as separate dated instances. Dedupe must handle same-title/different-date instances, not just exact dupes. **RE-CONFIRMED LIVE (2026-06-27):** in an 8-event `run_curate.py` batch, the "The Future Was Already Buried Here" exhibition appeared twice (6/27 + 6/28) — both enriched separately (= duplicated LLM cost). Dedupe should ideally run BEFORE enrichment to avoid paying twice.
+- **~~Enrich cap silently drops late-month events.~~ MITIGATED in UI (2026-06-27).** `run_curate.py --max 110` enriches chronologically; June had 168 unique events — Master's Summer Happy Hour was #127 and never appeared. UI now uses `max_enrich=None`. **CLI still has `--max`** — omit or set high for full months.
+- **UI scroll position ≠ global relevance rank.** Events listed by newsletter section order; a 0.9 social event can be row ~126 while a 0.6 arts event is row ~120. Within-section rank uses master's-first + score. Documented in [`docs/workflow.md`](docs/workflow.md).
+- **~~LiveWhale `cost` as integer breaks ingest.~~ FIXED 2026-06-27.** August feed returns `cost: 15` for some events; `_coerce_optional_str` at ingest. See [livewhale data card](docs/data-sources/livewhale.md).
+- **No dedupe across sources yet** → re-fetching the same web page will produce duplicate events. Don't enable scheduled monitoring before cross-source dedupe exists. **Within-feed dedupe IS live** (title+host collapse before enrichment).
 - **~~`host_org` HTML entities not decoded.~~ FIXED 2026-06-27.** Added `_clean_inline` (HTML-unescape + tag-strip + whitespace-collapse, returns None when empty) and applied it to `title`, `host_org`, and `location` at ingest. `registration_url` also now `html.unescape`d (Eventbrite links came back with `&amp;`, which can break the link). `Alumni &amp; Friends` → `Alumni & Friends`; emoji entities in titles decoded. Verified live.
 - **~~DEDUPE IS NOW THE TOP UNBLOCKER...~~ RESOLVED 2026-06-27.** `backend/dedupe.py` now runs before enrichment: July 331 instances → 105 unique, enriched once each. Recurring/multi-day events show as a single entry with a duration span. Remaining dedupe gap: fuzzy/cross-source matching not done yet (see Dedupe section).
 - **`grad_relevance` still clusters at coarse values (0.8 / 0.4 / 0.1).** Holistic rubric rebalanced *across categories* (wellness/arts now ≈ career), but many events still land on the same 0.80, so within-tier ordering is weak. Master's-first + tiers is enough to highlight for now; eval should check whether finer scoring is worth prompting for. NOTE: scoring is non-deterministic enough that re-runs can shift a borderline event a tier — fine for a human-edited draft, worth knowing.
@@ -174,6 +187,7 @@ cd project-brown-grad-events-copilot
 source .venv/bin/activate          # deps already installed
 # .env already exists with a live OPENAI_API_KEY (gitignored).
 python run_extract.py              # sanity check on the sample event (live LLM)
+streamlit run app/newsletter_editor.py   # UI: select events → blurbs → export
 ```
 
 If something breaks: check this log's **Concerns** section first — the likely culprits

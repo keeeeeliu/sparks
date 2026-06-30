@@ -1,14 +1,15 @@
 """Newsletter draft generation — copy-paste ready for the shared Google Doc.
 
-Unlike `report.py` (internal curator view with scores/reasoning), this produces
-**editor-facing** text: short blurbs, clean sections, links — no grad_relevance numbers.
+Primary workflow (human-in-the-loop):
+    curated report → AGGREGATOR selects worthwhile events → blurbs → paste into Google Doc
 
-Workflow (human-in-the-loop):
-    curate_range / cached enriched_events.json → select + blurbs → paste into Google Doc
-    → human adds images & final formatting → hand off for send.
+We do NOT assign "Don't Miss" / must-see — that is editorial work for whoever owns the
+final newsletter in Google Docs. Our job: filter, pick, and draft blurbs for selected events.
 
-Blurbs: one LLM call per *selected* event (concurrent, like enrichment). Use
-`use_llm=False` for a fast draft from the event description.
+Selection is stored in a YAML file (dev/CLI) or checkboxes (Streamlit). The model does
+NOT auto-pick which events to include unless you explicitly use `prepare_draft_auto()`.
+
+Blurbs: one LLM call per *selected* event (concurrent). `use_llm=False` uses description text.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from .curate import filter_by_target
@@ -28,7 +30,6 @@ from .models import Event
 from .pipeline import default_grad_target, rank_for_newsletter
 from .report import SECTIONS, format_when, group_into_sections, section_of
 
-# Sections we skip in the public-facing draft (admin noise, calendar notices).
 _SKIP_SECTIONS = {"Other / Administrative"}
 
 _BLURB_SYSTEM = """You write one-sentence blurbs for a Brown University graduate-student newsletter.
@@ -46,19 +47,75 @@ class _BlurbOut(BaseModel):
 
 
 @dataclass
-class NewsletterDraft:
-    """Selected events + blurbs, ready to render."""
+class EventSelection:
+    """Aggregator picks for one newsletter cycle (YAML or Streamlit → same shape)."""
 
+    month: str | None
+    events: list[str]
+
+
+@dataclass
+class NewsletterDraft:
     span: str
     month_label: str
-    highlights: list[tuple[Event, str]]
-    sections: dict[str, list[tuple[Event, str]]]  # section name → (event, blurb)
-    skipped_count: int = 0
+    sections: dict[str, list[tuple[Event, str]]]
+    unmatched_titles: list[str] = field(default_factory=list)
 
 
 def load_enriched_cache(path: str | Path) -> list[Event]:
     data = json.loads(Path(path).read_text())
     return [Event.model_validate(item) for item in data]
+
+
+def load_selection(path: str | Path) -> EventSelection:
+    """Load human picks from YAML. Same format Streamlit will write later."""
+    raw = yaml.safe_load(Path(path).read_text()) or {}
+    return EventSelection(
+        month=raw.get("month"),
+        events=[str(t).strip() for t in raw.get("events") or [] if str(t).strip()],
+    )
+
+
+def _norm_title(text: str) -> str:
+    text = text.strip().lower()
+    for ch in ("\u2019", "\u2018", "`"):
+        text = text.replace(ch, "'")
+    return " ".join(text.split())
+
+
+def match_event(pool: list[Event], title: str) -> Event | None:
+    """Resolve a human-entered title against the curated pool."""
+    want = _norm_title(title)
+    if not want:
+        return None
+    for ev in pool:
+        if _norm_title(ev.title) == want:
+            return ev
+    # Unique substring match (helps when YAML uses straight quotes vs curly in feed).
+    partial = [
+        ev for ev in pool
+        if want in _norm_title(ev.title) or _norm_title(ev.title) in want
+    ]
+    if len(partial) == 1:
+        return partial[0]
+    return None
+
+
+def resolve_selected(
+    pool: list[Event], titles: list[str]
+) -> tuple[list[Event], list[str]]:
+    """Return (matched events in pick order, titles that did not match)."""
+    matched: list[Event] = []
+    unmatched: list[str] = []
+    seen: set[str] = set()
+    for title in titles:
+        ev = match_event(pool, title)
+        if ev is None:
+            unmatched.append(title)
+        elif ev.title not in seen:
+            matched.append(ev)
+            seen.add(ev.title)
+    return matched, unmatched
 
 
 def _first_sentence(text: str, max_len: int = 200) -> str:
@@ -71,17 +128,14 @@ def _first_sentence(text: str, max_len: int = 200) -> str:
 
 
 def fallback_blurb(ev: Event) -> str:
-    """No-LLM blurb: first sentence of description, or a trimmed host/when line."""
     if ev.description:
         s = _first_sentence(ev.description)
         if s:
             return s
-    host = ev.host_org or "campus"
-    return f"Hosted by {host} — see link for details."
+    return f"Hosted by {ev.host_org or 'campus'} — see link for details."
 
 
 def generate_blurb(ev: Event) -> str:
-    """One LLM call → newsletter-voice one-liner."""
     user = (
         f"TITLE: {ev.title}\n"
         f"WHEN: {format_when(ev)}\n"
@@ -95,8 +149,11 @@ def generate_blurb(ev: Event) -> str:
         return fallback_blurb(ev)
 
 
-def generate_blurbs(events: list[Event], *, max_workers: int = 8, use_llm: bool = True) -> dict[str, str]:
-    """Return {event.title: blurb} for each event (title key is fine post-dedupe)."""
+def generate_blurbs(
+    events: list[Event], *, max_workers: int = 8, use_llm: bool = True
+) -> dict[str, str]:
+    if not events:
+        return {}
     if not use_llm:
         return {ev.title: fallback_blurb(ev) for ev in events}
 
@@ -117,102 +174,60 @@ def generate_blurbs(events: list[Event], *, max_workers: int = 8, use_llm: bool 
     return blurbs
 
 
-def pick_highlights(
+def build_draft_from_blurbs(
     events: list[Event],
-    *,
-    max_count: int = 8,
-    min_relevance: float = 0.5,
-) -> list[Event]:
-    """Don't Miss: master's picks + a well-rounded mix (wellness/arts/social)."""
-    eligible = [e for e in events if (e.grad_relevance or 0) >= min_relevance]
-    eligible = [e for e in eligible if section_of(e) not in _SKIP_SECTIONS]
-    if not eligible:
-        return []
-
-    picked: list[Event] = []
-    seen: set[str] = set()
-
-    def add(ev: Event) -> None:
-        if ev.title in seen or len(picked) >= max_count:
-            return
-        picked.append(ev)
-        seen.add(ev.title)
-
-    for ev in sorted(eligible, key=lambda e: (e.is_masters_facing(), e.grad_relevance or 0), reverse=True):
-        if ev.is_masters_facing():
-            add(ev)
-        if len(picked) >= max(4, max_count // 2):
-            break
-
-    for section in ("Wellness & Well-being", "Arts & Culture", "Social & Community"):
-        candidates = [
-            e for e in eligible
-            if section_of(e) == section and e.title not in seen
-        ]
-        candidates.sort(key=lambda e: e.grad_relevance or 0, reverse=True)
-        if candidates:
-            add(candidates[0])
-
-    for ev in sorted(eligible, key=lambda e: e.grad_relevance or 0, reverse=True):
-        add(ev)
-        if len(picked) >= max_count:
-            break
-    return picked
-
-
-def select_for_newsletter(
-    events: list[Event],
-    *,
-    min_relevance: float = 0.4,
-    max_per_section: int = 6,
-) -> tuple[dict[str, list[Event]], int]:
-    """Filter + cap per section. Returns (sections dict, skipped count)."""
-    filtered = [
-        e for e in events
-        if (e.grad_relevance or 0) >= min_relevance and section_of(e) not in _SKIP_SECTIONS
-    ]
-    skipped = len(events) - len(filtered)
-    grouped = group_into_sections(filtered)
-    capped = {name: evs[:max_per_section] for name, evs in grouped.items() if name not in _SKIP_SECTIONS}
-    return capped, skipped
-
-
-def prepare_draft(
-    events: list[Event],
+    blurbs: dict[str, str],
     span: str,
     month_label: str,
-    *,
-    min_relevance: float = 0.4,
-    max_per_section: int = 6,
-    max_highlights: int = 8,
-    use_llm: bool = True,
-    max_workers: int = 8,
 ) -> NewsletterDraft:
-    """Select events, generate blurbs, build a NewsletterDraft."""
-    section_events, skipped = select_for_newsletter(
-        events, min_relevance=min_relevance, max_per_section=max_per_section
-    )
-    all_selected: list[Event] = []
-    for evs in section_events.values():
-        all_selected.extend(evs)
-    highlights = pick_highlights(events, max_count=max_highlights, min_relevance=min_relevance)
-
-    to_blurb = {ev.title: ev for ev in all_selected}
-    for ev in highlights:
-        to_blurb[ev.title] = ev
-    blurbs = generate_blurbs(list(to_blurb.values()), max_workers=max_workers, use_llm=use_llm)
-
-    hl_pairs = [(ev, blurbs[ev.title]) for ev in highlights]
+    """Assemble a draft from selected events and human-edited blurbs (no LLM)."""
+    grouped = group_into_sections(events)
     section_pairs = {
-        name: [(ev, blurbs[ev.title]) for ev in evs]
-        for name, evs in section_events.items()
+        name: [(ev, blurbs.get(ev.title, fallback_blurb(ev))) for ev in evs]
+        for name, evs in grouped.items()
+        if evs
     }
     return NewsletterDraft(
         span=span,
         month_label=month_label,
-        highlights=hl_pairs,
         sections=section_pairs,
-        skipped_count=skipped,
+    )
+
+
+def save_selection(path: str | Path, selection: EventSelection) -> None:
+    """Persist aggregator picks — same YAML shape as `load_selection` reads."""
+    payload = {"month": selection.month, "events": selection.events}
+    Path(path).write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
+def prepare_draft_from_selection(
+    pool: list[Event],
+    selection: EventSelection,
+    span: str,
+    month_label: str,
+    *,
+    use_llm: bool = True,
+    max_workers: int = 8,
+) -> NewsletterDraft:
+    """Build a draft from aggregator-selected titles only."""
+    body_events, unmatched = resolve_selected(pool, selection.events)
+    blurbs = generate_blurbs(body_events, max_workers=max_workers, use_llm=use_llm)
+
+    grouped = group_into_sections(body_events)
+    section_pairs = {
+        name: [(ev, blurbs[ev.title]) for ev in evs if ev.title in blurbs]
+        for name, evs in grouped.items()
+        if evs
+    }
+
+    return NewsletterDraft(
+        span=span,
+        month_label=month_label,
+        sections=section_pairs,
+        unmatched_titles=unmatched,
     )
 
 
@@ -223,11 +238,43 @@ def events_from_cache_for_month(
     *,
     min_relevance: float = 0.0,
 ) -> list[Event]:
-    """Load cache → filter/rank like the curation pipeline (no re-enrichment)."""
     enriched = load_enriched_cache(cache_path)
     target = default_grad_target(start_date, end_date, min_relevance=min_relevance)
     selected = filter_by_target(enriched, target)
     return rank_for_newsletter(selected)
+
+
+# ---------------------------------------------------------------------------
+# Legacy auto-select path (model picks events) — use `--auto` only for experiments
+# ---------------------------------------------------------------------------
+
+
+def prepare_draft_auto(
+    events: list[Event],
+    span: str,
+    month_label: str,
+    *,
+    min_relevance: float = 0.4,
+    max_per_section: int = 6,
+    use_llm: bool = True,
+    max_workers: int = 8,
+) -> NewsletterDraft:
+    """Auto-pick by relevance caps. Prefer `prepare_draft_from_selection` for real use."""
+    filtered = [
+        e for e in events
+        if (e.grad_relevance or 0) >= min_relevance and section_of(e) not in _SKIP_SECTIONS
+    ]
+    grouped = group_into_sections(filtered)
+    section_events = {
+        name: evs[:max_per_section]
+        for name, evs in grouped.items()
+        if name not in _SKIP_SECTIONS
+    }
+    body = [ev for evs in section_events.values() for ev in evs]
+    sel = EventSelection(month=None, events=[e.title for e in body])
+    return prepare_draft_from_selection(
+        events, sel, span, month_label, use_llm=use_llm, max_workers=max_workers
+    )
 
 
 def _format_event_block(ev: Event, blurb: str) -> str:
@@ -236,14 +283,20 @@ def _format_event_block(ev: Event, blurb: str) -> str:
         f"{format_when(ev)} · {ev.host_org or 'Brown'}",
         blurb,
     ]
-    if ev.registration_url:
-        lines.append(f"Link: {ev.registration_url}")
-    lines.append("[Add image if available]")
+    link = ev.link_for_newsletter()
+    if link:
+        lines.append(f"Link: {link}")
+    page = ev.event_page_url()
+    if page and page != link:
+        lines.append(f"Event page: {page}")
+    if ev.image_url:
+        lines.append(f"Image: {ev.image_url}")
+    else:
+        lines.append("[Add image if available]")
     return "\n".join(lines)
 
 
 def render_newsletter(draft: NewsletterDraft) -> str:
-    """Copy-paste-friendly Markdown for the shared Google Doc."""
     out = [
         f"# Grad Events — {draft.month_label}",
         "",
@@ -252,17 +305,7 @@ def render_newsletter(draft: NewsletterDraft) -> str:
         "",
         "---",
         "",
-        "## Don't Miss",
-        "",
     ]
-    if draft.highlights:
-        for ev, blurb in draft.highlights:
-            out.append(_format_event_block(ev, blurb))
-            out.append("")
-    else:
-        out.append("_(No highlights selected — lower `--min-relevance` or add events manually.)_")
-        out.append("")
-
     for name, _ in SECTIONS:
         pairs = draft.sections.get(name)
         if not pairs:
@@ -273,11 +316,12 @@ def render_newsletter(draft: NewsletterDraft) -> str:
             out.append(_format_event_block(ev, blurb))
             out.append("")
 
-    if draft.skipped_count:
-        out.append(
-            f"---\n\n_{draft.skipped_count} lower-relevance / administrative events omitted "
-            f"(see curated report for the full list)._"
-        )
+    if draft.unmatched_titles:
+        out.append("---")
+        out.append("")
+        out.append("_Could not match these selection titles to the curated pool:_")
+        for t in draft.unmatched_titles:
+            out.append(f"- {t}")
     return "\n".join(out)
 
 

@@ -1,0 +1,16 @@
+# Example aggregator selection for July 2026 (pretend picks for dev / Streamlit prototyping).
+# Copy titles from data/output/curated_<range>.md — exact match, or close enough for fuzzy match.
+#
+# Role: we pick events worth including; someone else decides highlights in Google Docs.
+
+month: "2026-07"
+
+events:
+  - "Master's Career Services | US Job Search: Insights for International Students"
+  - "Financing Your Online Masters Degree"
+  - "Health Insurance in the U.S. 101 - Selecting a Plan for Master's Students"
+  - "Got Fulbright Questions? Join a Friday Ask Me Anything! 🌍"
+  - "Crafting Queer Keepsakes: DIY Leather Journal Making! (Part 1)"
+  - "Crafting Queer Keepsakes: DIY Journal Decorating! (Part 2)"
+  - "Save the Date: Sushi Pitch Night"
+  - "Fruit and Veggie Nutrition Superstars (Webinar)"

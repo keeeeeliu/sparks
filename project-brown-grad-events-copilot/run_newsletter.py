@@ -1,13 +1,15 @@
-"""Generate a copy-paste newsletter draft from curated events.
+"""Generate a newsletter draft from HUMAN-SELECTED events.
 
-Uses cached enrichment by default (no re-pay for LLM enrichment). Blurbs are one
-LLM call per *selected* event (~30–40 for a typical month).
+Default: read picks from a YAML selection file (same format Streamlit will write later).
+Blurbs are generated ONLY for selected events.
 
 Usage:
     python run_newsletter.py --month 2026-07
-    python run_newsletter.py --month 2026-07 --from-cache data/output/enriched_events.json
-    python run_newsletter.py --month 2026-07 --no-llm          # fast draft, description-based blurbs
-    python run_newsletter.py --month 2026-07 --refresh          # re-run full curation first
+    python run_newsletter.py --month 2026-07 --from-selection data/selections/july_2026_example.yaml
+    python run_newsletter.py --month 2026-07 --no-llm
+    python run_newsletter.py --month 2026-07 --auto   # legacy: model auto-picks events
+
+Requires enriched cache: python run_curate.py --month 2026-07 --max 110 --save
 
 Output: data/output/newsletter_<start>_<end>.md
 """
@@ -20,7 +22,9 @@ from pathlib import Path
 
 from backend.newsletter import (
     events_from_cache_for_month,
-    prepare_draft,
+    load_selection,
+    prepare_draft_auto,
+    prepare_draft_from_selection,
     write_newsletter,
 )
 from backend.pipeline import curate_range, default_grad_target, resolve_month_range
@@ -32,26 +36,33 @@ def _month_label(month: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate a grad-events newsletter draft.")
+    parser = argparse.ArgumentParser(
+        description="Generate newsletter draft from human-selected events."
+    )
     parser.add_argument("--month", required=True, help="YYYY-MM (e.g. 2026-07).")
+    parser.add_argument(
+        "--from-selection",
+        default="data/selections/july_2026_example.yaml",
+        help="YAML file with selected event titles (aggregator picks).",
+    )
     parser.add_argument(
         "--from-cache",
         default="data/output/enriched_events.json",
-        help="Enriched events JSON (default: data/output/enriched_events.json).",
+        help="Enriched events JSON cache.",
     )
-    parser.add_argument("--refresh", action="store_true",
-                        help="Re-run curate_range (ingest+dedupe+enrich) instead of cache.")
-    parser.add_argument("--min-relevance", type=float, default=0.4,
-                        help="Min grad_relevance to include (default 0.4).")
-    parser.add_argument("--max-per-section", type=int, default=6,
-                        help="Max events per section (default 6).")
-    parser.add_argument("--max-highlights", type=int, default=8,
-                        help="Max Don't Miss items (default 8).")
-    parser.add_argument("--no-llm", action="store_true",
-                        help="Skip LLM blurbs; use first sentence of description.")
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Legacy: model auto-picks events by relevance (not the normal workflow).",
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Re-run curate_range before drafting (refreshes cache in memory only).",
+    )
+    parser.add_argument("--no-llm", action="store_true", help="Skip LLM blurbs.")
     parser.add_argument("--workers", type=int, default=8, help="Concurrent blurb calls.")
-    parser.add_argument("--max-enrich", type=int, default=110,
-                        help="When --refresh: cap events enriched.")
+    parser.add_argument("--max-enrich", type=int, default=110, help="When --refresh.")
     args = parser.parse_args()
 
     start_date, end_date = resolve_month_range(args.month)
@@ -64,8 +75,8 @@ def main() -> None:
         result = curate_range(
             start_date, end_date, target=target, max_enrich=args.max_enrich
         )
-        ranked = result.events
-        print(f"  {result.unique_count} unique → {len(ranked)} ranked.")
+        pool = result.events
+        print(f"  {result.unique_count} unique → {len(pool)} ranked.")
     else:
         cache = Path(args.from_cache)
         if not cache.exists():
@@ -73,32 +84,47 @@ def main() -> None:
                 f"Cache not found: {cache}\n"
                 f"Run: python run_curate.py --month {args.month} --max 110 --save"
             )
-        print(f"Loading enriched events from {cache}…")
-        ranked = events_from_cache_for_month(cache, start_date, end_date)
-        print(f"  {len(ranked)} events for {span}.")
+        print(f"Loading curated pool from {cache}…")
+        pool = events_from_cache_for_month(cache, start_date, end_date)
+        print(f"  {len(pool)} events in pool for {span}.")
 
-    print("Generating newsletter draft…")
-    draft = prepare_draft(
-        ranked,
-        span,
-        label,
-        min_relevance=args.min_relevance,
-        max_per_section=args.max_per_section,
-        max_highlights=args.max_highlights,
-        use_llm=not args.no_llm,
-        max_workers=args.workers,
-    )
+    if args.auto:
+        print("Auto-select mode (legacy — model picks events)…")
+        draft = prepare_draft_auto(
+            pool, span, label, use_llm=not args.no_llm, max_workers=args.workers
+        )
+    else:
+        sel_path = Path(args.from_selection)
+        if not sel_path.exists():
+            raise SystemExit(
+                f"Selection file not found: {sel_path}\n"
+                "Copy data/selections/selection.example.yaml and add event titles "
+                "from the curated report."
+            )
+        selection = load_selection(sel_path)
+        print(f"Selection from {sel_path}: {len(selection.events)} event(s)")
+        draft = prepare_draft_from_selection(
+            pool,
+            selection,
+            span,
+            label,
+            use_llm=not args.no_llm,
+            max_workers=args.workers,
+        )
 
     out_dir = Path("data/output")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"newsletter_{start_date}_{end_date}.md"
     write_newsletter(out_path, draft)
 
-    n_sections = sum(len(v) for v in draft.sections.values())
+    n_body = sum(len(v) for v in draft.sections.values())
     print(f"\nSaved → {out_path}")
-    print(f"  Don't Miss: {len(draft.highlights)} · Section events: {n_sections} · "
-          f"Skipped (low/admin): {draft.skipped_count}")
-    print("  Open the file, review blurbs, copy-paste into the shared Google Doc.")
+    print(f"  Selected events in draft: {n_body}")
+    if draft.unmatched_titles:
+        print(f"  WARNING: {len(draft.unmatched_titles)} title(s) did not match the pool:")
+        for t in draft.unmatched_titles:
+            print(f"    - {t}")
+    print("  Review blurbs → copy-paste into the shared Google Doc.")
 
 
 if __name__ == "__main__":

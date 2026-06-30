@@ -65,6 +65,8 @@ def _merge_group(group: list[Event]) -> Event:
             merged.location = e.location
         if not merged.cost and e.cost:
             merged.cost = e.cost
+        if not merged.image_url and e.image_url:
+            merged.image_url = e.image_url
 
     return merged
 

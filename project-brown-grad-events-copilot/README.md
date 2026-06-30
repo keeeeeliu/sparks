@@ -1,6 +1,6 @@
 # Brown Grad Events & Newsletter Copilot
 
-> Status: **Idea / pre-build** · Owner: Ke · Last updated: 2026-06-21
+> Status: **Wave A MVP — Streamlit live, pilot pending** · Owner: Ke · Last updated: 2026-06-27
 > Track: **Real-world / work project** (separate from the personal-interest zero-proof trio)
 
 A productivity + creativity tool for my graduate assistantship at **Brown University**, where I help with **event planning for the grad community** and **produce the monthly grad newsletter** (gathering on/off-campus events, and reaching out to organizations to inquire about theirs).
@@ -41,12 +41,24 @@ Menu / timeline / budget help for grad events (this is where my zero-proof inter
 
 ---
 
-## Architecture (as built — Wave A in progress)
+## Architecture (as built — Wave A MVP)
 
-> This reflects the current implementation and supersedes parts of the original "Design"
-> plan below. Decision rationale + evidence is in `**[docs/decisions/](docs/decisions/)`** (ADRs);
-> external-source facts/caveats are in `**[docs/data-sources/](docs/data-sources/)**` (data cards);
-> current status, what's verified, and open concerns are in `**[PROGRESS.md](PROGRESS.md)**`.
+> Decision rationale + evidence: [`docs/decisions/`](docs/decisions/) (ADRs) ·
+> Data-source caveats: [`docs/data-sources/`](docs/data-sources/) ·
+> Status + gotchas: [`PROGRESS.md`](PROGRESS.md) ·
+> **Workflow (human-in-the-loop):** [`docs/workflow.md`](docs/workflow.md)
+
+### Quick start (Streamlit)
+
+```bash
+cd project-brown-grad-events-copilot
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # add OPENAI_API_KEY
+streamlit run app/newsletter_editor.py
+```
+
+Sidebar: enter month (e.g. `2026-06`) → **Fetch events for this month** → select → blurbs → export.
 
 **Two ingestion paths, both producing `Event`** (ADR-0001):
 
@@ -124,7 +136,7 @@ class Event(BaseModel):
 - **Backend/agent:** Python **FastAPI** + **LangGraph**
 - **Data:** Pydantic schemas; **Postgres + pgvector** (or Chroma to start) for dedupe/relevance
 - **LLM:** provider-agnostic wrapper (OpenAI/Anthropic)
-- **Frontend:** **Next.js + Tailwind** (or Streamlit for a fast MVP), with an editable newsletter preview
+- **Frontend (Wave A):** **Streamlit** — `app/newsletter_editor.py` (live fetch, select, blurbs, export). Next.js deferred.
 - **Observability:** Langfuse · **Deploy:** Docker → Railway/Fly + Vercel
 
 ### Suggested folder structure
@@ -142,7 +154,9 @@ project-brown-grad-events-copilot/
     newsletter.py    <- draft generation (template + voice)
     outreach.py      <- (Wave B) draft inquiry + approval tool
     api.py           <- FastAPI endpoints
-  frontend/          <- newsletter preview + editor, outreach approval UI
+  app/
+    newsletter_editor.py   <- Streamlit UI (Wave A)
+  run_curate.py, run_newsletter.py, run_extract.py
   eval/
     labeled_events.json
     evaluate.py
@@ -164,17 +178,18 @@ project-brown-grad-events-copilot/
 
 ## Milestones (Wave A)
 
-1. Env + deps + LLM wrapper + `Event` schema; extract one real event end-to-end.
-2. Batch-extract from a real month of sources; add dedupe.
-3. Relevance scoring + curation; generate a first newsletter draft.
-4. Simple editable frontend; pilot it on an actual newsletter cycle.
-5. Eval (extraction accuracy + newsletter quality); write up time saved.
+1. ~~Env + deps + LLM wrapper + `Event` schema; extract one event end-to-end.~~
+2. ~~Batch-extract a real month; dedupe.~~
+3. ~~Relevance scoring + curation; newsletter draft.~~
+4. ~~Streamlit UI~~ — **pilot on a real newsletter cycle** ← next
+5. Eval (extraction accuracy + newsletter quality); write up time saved
 
 ## Next steps
 
-- [ ] Observe my next newsletter cycle; note sources + where time goes (this is my requirements doc).
-- [ ] Talk to the team/supervisor about piloting it.
-- [ ] Scaffold the `Event` schema + extractor on real pasted event text.
+- [ ] **Pilot:** one real month through Streamlit → paste into shared Google Doc
+- [ ] Talk to supervisor/team about piloting
+- [ ] Voice tuning (paste past newsletter into blurb prompt)
+- [ ] Eval harness + initial commit to git
 
 ## References
 

@@ -103,7 +103,7 @@ def ingest_web_sources(path: str | Path = "sources.yaml") -> list[SourceItem]:
 # Structured feeds (LiveWhale) -> Event directly, no LLM.
 # ---------------------------------------------------------------------------
 
-_LIVEWHALE_FIELDS = "location,summary,description,group_title,tags,event_types,registration"
+_LIVEWHALE_FIELDS = "location,summary,description,group_title,tags,event_types,registration,thumbnail"
 # NOTE: event_types_audience comes back by default. It is sparse (~30% summer, ~0% mid-semester)
 # and has NO "graduate" value at Brown, so we keep it only as a hint for enrichment (ADR-0005).
 
@@ -163,6 +163,22 @@ def build_livewhale_url(
     return path + "/"
 
 
+def _livewhale_display_image(thumbnail: str | None, *, width: int = 480) -> str | None:
+    """Upscale a LiveWhale thumbnail URL for UI preview / copy-paste into Google Docs."""
+    if not thumbnail or not str(thumbnail).strip():
+        return None
+    url = html.unescape(str(thumbnail).strip())
+    return re.sub(r"/width/\d+/height/\d+/", f"/width/{width}/height/{width}/", url)
+
+
+def _coerce_optional_str(value: object | None) -> str | None:
+    """LiveWhale sometimes returns numbers (e.g. cost=15) where we store strings."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
 def _livewhale_item_to_event(item: dict, source_url: str) -> Event:
     """Deterministic field mapping. We copy what's there; absent -> None (never invented)."""
     event_types = [t.strip() for t in (item.get("event_types") or []) if t and t.strip()]
@@ -180,7 +196,8 @@ def _livewhale_item_to_event(item: dict, source_url: str) -> Event:
         registration_url=html.unescape(
             item.get("registration") or item.get("online_url") or item.get("url") or ""
         ) or None,
-        cost=item.get("cost"),
+        image_url=_livewhale_display_image(item.get("thumbnail")),
+        cost=_coerce_optional_str(item.get("cost")),
         tags=list(tags) if isinstance(tags, list) else [],
         audience_tags=list(audience_tags) if isinstance(audience_tags, list) else [],
         source_ref=item.get("url") or source_url,

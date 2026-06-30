@@ -95,6 +95,10 @@ class Event(BaseModel):
         "Set during enrichment; gives the human curator a transparent rationale.",
     )
     registration_url: Optional[str] = None
+    image_url: Optional[str] = Field(
+        default=None,
+        description="Event image from the source feed (e.g. LiveWhale thumbnail URL).",
+    )
     cost: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
 
@@ -142,6 +146,17 @@ class Event(BaseModel):
     def is_grad_facing(self) -> bool:
         """True if enrichment tagged this for grad students (incl. master's/doctoral)."""
         return any(a.strip().lower() in _GRAD_AUDIENCE for a in self.audience)
+
+    def event_page_url(self) -> str | None:
+        """Canonical event page on the source calendar, when known."""
+        ref = (self.source_ref or "").strip()
+        if ref and ref != "unknown" and ref.startswith("http"):
+            return ref
+        return None
+
+    def link_for_newsletter(self) -> str | None:
+        """Best reader-facing link — registration when set, else event page."""
+        return self.registration_url or self.event_page_url()
 
 
 class ExtractionResult(BaseModel):

@@ -11,7 +11,7 @@
   `/start_date/YYYY-MM-DD/`, `/end_date/YYYY-MM-DD/`, `/paginate/<n>/`,
   `/response_fields/<csv>/`
 - **Extra fields must be requested** via `/response_fields/` (e.g. `description,location,
-  group_title,tags,event_types,registration`).
+  group_title,tags,event_types,registration,thumbnail`).
 - **Response shape:** `{ "meta": {...}, "links": {...}, "data": [ ...events ] }`.
 - **Pagination:** follow `links.next` until null. `meta.total_results` ≈ **1,161** across
   **233 pages** (whole calendar).
@@ -32,7 +32,9 @@ Coverage from a 300-event sample (2026-06-24; reproduce with the profiling scrip
 | `event_types` (type) | **52%** | medium | crude buckets; may include access markers like "Open to the Public"; **leading whitespace seen** (we `.strip()`) |
 | `event_types_audience` | **30%** | **LOW — do not trust** | see Known issue #2 |
 | `event_types_campus` | **0%** | n/a | unused at Brown |
+| `cost` | sparse | medium | free text or **integer** (e.g. `15`) — we coerce to string at ingest |
 | `registration` | rare | high when present | true reg link; we fall back to event `url` |
+| `thumbnail` | **~87%** (July 2026) | high when present | event image; mapped to `Event.image_url` (480px display URL) |
 | `is_canceled` | sparse | high | we skip these |
 | `url` | 100% | high | canonical event page (slug sometimes truncated) |
 
@@ -58,6 +60,9 @@ Coverage from a 300-event sample (2026-06-24; reproduce with the profiling scrip
    at ingest.
 5. **General principle:** this API exposes more fields than the website renders; never
    assume a feed field is shown to (or curated by) humans.
+6. **`cost` type inconsistency.** Usually a string (`"Free"`) or null; occasionally an
+   integer (reproduced August 2026: `15`). Ingest coerces via `_coerce_optional_str` —
+   without this, Pydantic rejects the event and the whole fetch fails.
 
 ## Implications for our design
 - **Trust:** `group_title` (dept) and `tags` (topic) → safe for deterministic filtering.

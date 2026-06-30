@@ -10,4 +10,6 @@ anthropic>=0.34
 pypdf>=4.2            # text-based PDFs
 httpx>=0.27          # fetching web pages
 trafilatura>=1.9     # readable-text extraction from HTML
-PyYAML>=6.0          # curated web source list (sources.yaml)
+# Frontend (Wave A MVP)
+streamlit>=1.35
+

@@ -51,21 +51,29 @@ def format_when(ev: Event) -> str:
     return ev.start.strftime("%a %m/%d %H:%M")
 
 
+def format_relevance_summary(ev: Event) -> str:
+    """One-line relevance score + reasoning — same text as the curated report."""
+    rel = f"{ev.grad_relevance:.2f}" if ev.grad_relevance is not None else "n/a"
+    reason = ev.relevance_reasoning or "(no reasoning)"
+    return f"Relevance {rel} — {reason}"
+
+
 def _event_md(ev: Event) -> str:
     """One event as a Markdown block — FULL text, nothing truncated."""
     star = " ⭐ master's-facing" if ev.is_masters_facing() else ""
-    rel = f"{ev.grad_relevance:.2f}" if ev.grad_relevance is not None else "n/a"
     lines = [
         f"### {ev.title}{star}",
         f"- **When:** {format_when(ev)}",
         f"- **Host:** {ev.host_org or 'unknown'}",
         f"- **Audience:** {', '.join(ev.audience) or 'unspecified'}",
-        f"- **Relevance {rel}** — {ev.relevance_reasoning or '(no reasoning)'}",
+        f"- **{format_relevance_summary(ev)}**",
     ]
     if ev.audience_evidence:
         lines.append(f'- **Audience evidence:** "{ev.audience_evidence}"')
     if ev.registration_url:
         lines.append(f"- **Link:** {ev.registration_url}")
+    if ev.image_url:
+        lines.append(f"- **Image:** {ev.image_url}")
     return "\n".join(lines)
 
 
