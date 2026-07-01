@@ -14,6 +14,7 @@ Single-user/local by design: `_EVENT_CACHE` is a process-global, not per-session
 from __future__ import annotations
 
 import hashlib
+import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
@@ -28,13 +29,15 @@ from .report import format_when, section_of
 
 app = FastAPI(title="Grad Events Copilot API")
 
-# Allow the Next.js dev origin (and Vite/others) to call us.
+# Local dev origins are always allowed. In production, add your deployed frontend URL(s)
+# via the ALLOWED_ORIGINS env var (comma-separated), e.g.
+#   ALLOWED_ORIGINS=https://grad-events.vercel.app
+_DEV_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_ENV_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_DEV_ORIGINS + _ENV_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
