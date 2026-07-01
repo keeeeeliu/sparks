@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@theme {
+  /* Warm-neutral base */
+  --color-canvas: #f7f6f2; /* page background */
+  --color-surface: #ffffff; /* cards */
+  --color-selected: #f0eee9; /* selected card fill */
+  --color-ink: #232020; /* headings / primary text */
+  --color-muted: #6f675f; /* secondary text / reasoning */
+  --color-faint: #9a938b; /* meta lines, counts */
+  --color-line: #e8e3db; /* hairline borders */
+
+  /* Single accent (sage green — matches the approved mockup) */
+  --color-accent: #4f6f54;
+  --color-accent-hover: #455f49;
+  --color-accent-soft: #e9efe8; /* chip + soft fills */
+  --color-accent-mist: #d3e0d5; /* light-but-visible green (today's circle) */
+  --color-accent-ink: #3c5743; /* text on soft accent */
+
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-serif: var(--font-fraunces), Georgia, serif;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* Indeterminate progress bar (used during the ~30–60s fetch) */
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+.animate-indeterminate {
+  animation: indeterminate 1.3s ease-in-out infinite;
+}
+
+/* Elegant calendar — restyle react-day-picker to match the app (soft, rounded, green,
+   serif month label). Scoped under .cal-elegant so it always wins over the base stylesheet. */
+.cal-elegant .rdp-root {
+  --rdp-accent-color: var(--color-accent);
+  --rdp-accent-background-color: var(--color-accent-soft);
+  --rdp-today-color: var(--color-accent);
+  --rdp-selected-border: none;
+  --rdp-day-width: 2.4rem;
+  --rdp-day-height: 2.4rem;
+  --rdp-weekday-text-transform: none;
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+}
+.cal-elegant .rdp-caption_label {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--color-ink);
+}
+.cal-elegant .rdp-weekday {
+  color: var(--color-faint);
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+.cal-elegant .rdp-day_button {
+  border-radius: 9999px;
+  font-size: 0.9rem;
+}
+.cal-elegant .rdp-day_button:hover:not([disabled]) {
+  background-color: var(--color-accent-soft);
+}
+.cal-elegant .rdp-selected .rdp-day_button {
+  background-color: var(--color-accent);
+  color: #fff;
+  border: none;
+  font-weight: 500;
+}
+.cal-elegant .rdp-today:not(.rdp-selected) .rdp-day_button {
+  background-color: var(--color-accent-mist);
+  color: var(--color-accent-ink);
+  font-weight: 600;
+}
+.cal-elegant .rdp-chevron {
+  fill: var(--color-muted);
+}
+.cal-elegant .rdp-button_previous:hover .rdp-chevron,
+.cal-elegant .rdp-button_next:hover .rdp-chevron {
+  fill: var(--color-accent);
+}

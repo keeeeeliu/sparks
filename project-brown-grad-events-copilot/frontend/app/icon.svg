@@ -1,0 +1,20 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#5f855f"/>
+      <stop offset="1" stop-color="#42603f"/>
+    </linearGradient>
+  </defs>
+  <!-- Sage rounded tile -->
+  <rect x="2" y="2" width="28" height="28" rx="8" fill="url(#tile)"/>
+  <path d="M4 10 Q16 4 28 10 L28 7 Q16 2 4 7 Z" fill="#ffffff" opacity="0.12"/>
+
+  <!-- Chubby bird (cream), facing left, tail up-right -->
+  <path d="M9 17 C9 12.4 12 9.8 16 9.8 C20.4 9.8 24 12.4 25 15.4 L28.6 13.7 L25.4 18 C24.4 22 20.4 24.6 16 24.6 C11.4 24.6 9 21.6 9 17 Z" fill="#fdfcf9"/>
+  <!-- Orange beak -->
+  <path d="M9 16.2 L4.6 17.3 L9 18.9 Z" fill="#e89a45"/>
+  <!-- Soft yellow-orange wing -->
+  <path d="M13.6 15.8 C17 14.9 21 16.1 22.6 18.9 C19.5 20.9 15 20.8 13 18.4 C13 17.5 13.2 16.6 13.6 15.8 Z" fill="#edb45f"/>
+  <!-- Eye -->
+  <circle cx="12.8" cy="14.4" r="1.25" fill="#34503b"/>
+</svg>

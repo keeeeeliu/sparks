@@ -116,6 +116,25 @@
 - `eval/labeled_events.json` — empty starter (0 events). Run `python eval/label_events.py --n 25` to populate.
 - **Why consistency eval first:** it runs immediately (no labeling), catches regressions if you change the enrichment prompt or switch models, and gives you a baseline before investing in ground-truth labeling.
 
+### Next.js frontend + FastAPI (2026-06-30) — replacing Streamlit
+- **`frontend/`** — Next.js 15 + TS + Tailwind v4. Design: Notion-clean, Fraunces serif headlines +
+  Inter body, warm-neutral base + sage-green accent (see [`docs/frontend-plan.md`](docs/frontend-plan.md)).
+- **Curate screen** (`/`): From/To date range → Fetch → **foldable category sections**, search /
+  master's-only / min-relevance filters, selection, fetch-cost estimate.
+- **Compose screen** (`/compose`): Generate blurbs → edit → **✨ Improve** → per-event one-click
+  **Copy** for blurb / Event link / Image URL (the shared Google Doc has its own format, so we copy
+  pieces — no pre-formatted markdown export). Shared Zustand store across pages.
+- **`backend/api.py`** (FastAPI) — thin wrapper: `POST /api/curate` (→ `curate_range`), `/api/blurbs`
+  (→ `generate_blurbs`), `/api/blurbs/improve` (→ `improve_blurb`), `/api/health`. Maps `Event`→`EventOut`,
+  runs the blocking pipeline in a threadpool, keeps enriched events in a process cache so blurb
+  endpoints resolve by id. CORS for `localhost:3000`. Deps added: `fastapi`, `uvicorn[standard]`.
+- **Verified live end-to-end (2026-06-30):** `/api/curate` on 2026-07-08–09 → 19 events, all fields
+  mapped, sections aligned, usage $0.0037; `/api/blurbs` + `/api/blurbs/improve` return voice-tuned text.
+- **Run:** backend `uvicorn backend.api:app --reload --port 8000`; frontend `cd frontend && npm run dev`
+  → http://localhost:3000. Streamlit kept as the internal fallback tool. See `frontend/README.md`.
+- **Still mock-free but local-only:** `_EVENT_CACHE` is process-global (single-user); store resets on
+  hard refresh (no persistence yet); blurb streaming/SSE + deploy are future work.
+
 ### Tooling / scaffolding
 - `requirements.txt`, `.env.example`, `.gitignore`, `sources.example.yaml`.
 - `run_extract.py` — end-to-end smoke test for Stage 1 (text / PDF / URL / feed).
