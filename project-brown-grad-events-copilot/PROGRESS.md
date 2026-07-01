@@ -133,7 +133,12 @@
 - **Run:** backend `uvicorn backend.api:app --reload --port 8000`; frontend `cd frontend && npm run dev`
   → http://localhost:3000. Streamlit kept as the internal fallback tool. See `frontend/README.md`.
 - **Still mock-free but local-only:** `_EVENT_CACHE` is process-global (single-user); store resets on
-  hard refresh (no persistence yet); blurb streaming/SSE + deploy are future work.
+  hard refresh (no persistence yet); blurb streaming/SSE are future work.
+- **DEPLOYED LIVE (2026-07-01):** frontend on **Vercel** → https://sparks-livid.vercel.app · backend
+  (FastAPI) on **Railway** → https://sparks-production-b680.up.railway.app. Wiring: Vercel
+  `NEXT_PUBLIC_API_URL` → Railway URL; Railway `ALLOWED_ORIGINS` → Vercel URL; `OPENAI_API_KEY` set as a
+  Railway secret. Auto-redeploys on `git push origin main` (env-var changes need a manual redeploy —
+  `NEXT_PUBLIC_*` bakes in at build time). Guide: [`DEPLOY.md`](DEPLOY.md).
 
 ### Tooling / scaffolding
 - `requirements.txt`, `.env.example`, `.gitignore`, `sources.example.yaml`.

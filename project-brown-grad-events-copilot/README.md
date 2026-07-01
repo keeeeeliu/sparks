@@ -1,7 +1,10 @@
 # Brown Grad Events & Newsletter Copilot
 
-> Status: **Wave A MVP — Streamlit live, pilot pending** · Owner: Ke · Last updated: 2026-06-27
+> Status: **Wave A live — Next.js + FastAPI deployed** · Owner: Ke · Last updated: 2026-07-01
 > Track: **Real-world / work project** (separate from the personal-interest zero-proof trio)
+>
+> 🔗 **Live demo:** https://sparks-livid.vercel.app · Frontend on Vercel, backend (FastAPI) on Railway.
+> Deploy steps: [`DEPLOY.md`](DEPLOY.md) · Frontend details: [`frontend/README.md`](frontend/README.md)
 
 "Cut monthly newsletter prep from ~3 hours of manually scanning and de-duplicating the campus calendar to ~15 minutes of focused review — and surfaced relevant events I'd previously miss to scrolling fatigue."
 
@@ -89,6 +92,70 @@ text ─▶ extract (LLM) ──┘
 ```
 
 Pipeline modules: `backend/ingest.py` · `backend/extract.py` · `backend/curate.py` · `backend/models.py`.
+
+---
+
+## How a "Fetch events" click flows end-to-end
+
+The full journey of a single click, from the browser to the LLM and back — a good mental model
+for how the whole full-stack app fits together.
+
+### The 30-second map
+
+```
+ YOU click "Fetch events"
+        │
+   ┌────▼─────────────────────────────────────┐
+   │  FRONTEND  (Next.js, on Vercel)           │
+   │  button → store → fetch() ───────────────┐│
+   └───────────────────────────────────────── ││
+                                               ▼▼   HTTPS request over the internet
+   ┌───────────────────────────────────────────────┐
+   │  BACKEND  (FastAPI/Python, on Railway)         │
+   │  CORS check → /api/curate → curate_range():    │
+   │     ingest (Brown calendar) → dedupe →         │
+   │     enrich (OpenAI LLM ×N) → rank → cache      │
+   └───────────────────────────────────────────────┘
+                                               ▲▲   JSON response back
+   ┌────────────────────────────────────────── ││
+   │  FRONTEND re-renders with the events ──────┘│
+   └─────────────────────────────────────────────┘
+```
+
+### Step by step
+
+**In the browser (frontend — Next.js on Vercel):**
+
+1. You click the button in [`frontend/components/DateRangeBar.tsx`](frontend/components/DateRangeBar.tsx). Its `onClick` calls `fetchEvents()`.
+2. `fetchEvents()` lives in the **Zustand store** ([`frontend/lib/store.ts`](frontend/lib/store.ts)). It flips `loading = true` (this shows the spinner) and calls `curate(start, end)`.
+3. `curate()` in [`frontend/lib/api.ts`](frontend/lib/api.ts) makes the network call — an **HTTPS request** leaves the browser for the Railway backend:
+
+   ```
+   fetch(`${NEXT_PUBLIC_API_URL}/api/curate`, { method: "POST", body: { start, end } })
+   ```
+
+**Over the network → the server (backend — FastAPI on Railway):**
+
+4. The request arrives. **CORS middleware** checks the origin against `ALLOWED_ORIGINS`. Allowed → it proceeds.
+5. The `/api/curate` handler in [`backend/api.py`](backend/api.py) runs `curate_range(start, end)` **in a threadpool** (the work is slow + blocking, so this keeps the server responsive).
+6. `curate_range()` in [`backend/pipeline.py`](backend/pipeline.py) runs the pipeline:
+   - **ingest** — fetches events from **Brown's LiveWhale calendar** (server→Brown HTTP call). No AI.
+   - **dedupe** — collapses duplicate/recurring events. Pure logic.
+   - **enrich** — for each unique event, a **concurrent OpenAI LLM call** to score relevance/audience/category. **The slow part (~30–60s)**, and where the **API key is used** — server-side, secret, never in the browser.
+   - **rank** — orders them (master's-first, then relevance).
+7. The handler maps each internal `Event` → a slim `EventOut`, **stashes them in an in-memory cache** (`_EVENT_CACHE`) so the later "generate blurbs" call can find them by id, and returns JSON: `{ events: [...], usage: {tokens...} }`.
+
+**Back over the network → the browser:**
+
+8. The JSON returns; `curate()` parses it.
+9. The store sets `events`, `usage`, `loaded = true`, `loading = false`.
+10. **React re-renders automatically** (state changed): the spinner disappears and [`frontend/app/page.tsx`](frontend/app/page.tsx) paints the events into foldable sections with cards, and the summary bar shows "X events · N tokens used."
+
+### The three ideas that make it click
+
+- **Client / server split:** the browser holds *no secrets and does no AI* — it just asks the server. The **OpenAI key stays on Railway**, server-side. (A key in frontend code would be public — never do it.)
+- **Why a separate Python backend:** the AI pipeline is Python; the LLM call and key belong on a server, not in the user's browser.
+- **Why it's slow, and why that's OK:** wall-clock time is almost entirely the **per-event LLM enrichment** — so those calls run **concurrently**, and the staged loading UI gives honest feedback for a genuinely long operation.
 
 ---
 
