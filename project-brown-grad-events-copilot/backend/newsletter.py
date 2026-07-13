@@ -84,6 +84,14 @@ concrete details (dates, locations, registration notes) exactly.
 Return JSON: {"blurb": "..."}"""
 
 
+_PROOFREAD_SYSTEM = """You are a careful copy editor for a Brown University graduate-student newsletter.
+
+Proofread the given blurb: fix only grammar, spelling, punctuation, and typos. Do NOT rewrite,
+rephrase, or restructure. Keep the blurb exactly as is except for grammar corrections.
+
+Return JSON: {"blurb": "..."}"""
+
+
 class _BlurbOut(BaseModel):
     blurb: str = Field(..., min_length=5, max_length=600)
 
@@ -208,6 +216,28 @@ def improve_blurb(text: str, ev: Event | None = None) -> str:
             f"HOST: {ev.host_org or 'unknown'}"
         )
     raw = complete_json(_IMPROVE_SYSTEM, user, label="improve")
+    try:
+        return _BlurbOut.model_validate(json.loads(raw)).blurb.strip()
+    except (json.JSONDecodeError, ValidationError):
+        return text
+
+
+def proofread_blurb(text: str, ev: Event | None = None) -> str:
+    """Fix grammar and typos only; do not rewrite or rephrase.
+
+    Returns the original text unchanged on any failure.
+    """
+    if not text.strip():
+        return text
+    user = f"BLURB TO PROOFREAD:\n{text.strip()}"
+    if ev is not None:
+        user += (
+            "\n\nReference event facts:\n"
+            f"TITLE: {ev.title}\n"
+            f"WHEN: {format_when(ev)}\n"
+            f"HOST: {ev.host_org or 'unknown'}"
+        )
+    raw = complete_json(_PROOFREAD_SYSTEM, user, label="proofread")
     try:
         return _BlurbOut.model_validate(json.loads(raw)).blurb.strip()
     except (json.JSONDecodeError, ValidationError):

@@ -44,3 +44,9 @@ export async function improveBlurb(text: string, id?: string): Promise<string> {
   const { blurb } = await post<{ blurb: string }>("/api/blurbs/improve", { text, id });
   return blurb;
 }
+
+/** POST /api/blurbs/proofread — fix grammar and typos only. */
+export async function proofreadBlurb(text: string, id?: string): Promise<string> {
+  const { blurb } = await post<{ blurb: string }>("/api/blurbs/proofread", { text, id });
+  return blurb;
+}

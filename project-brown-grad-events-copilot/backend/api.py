@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from . import telemetry
 from .models import Event
-from .newsletter import generate_blurbs, improve_blurb
+from .newsletter import generate_blurbs, improve_blurb, proofread_blurb
 from .pipeline import curate_range
 from .report import format_when, section_of
 
@@ -192,3 +192,12 @@ async def improve(req: ImproveRequest) -> ImproveResponse:
     telemetry.reset()
     improved = await run_in_threadpool(improve_blurb, req.text, ev)
     return ImproveResponse(blurb=improved)
+
+
+@app.post("/api/blurbs/proofread", response_model=ImproveResponse)
+async def proofread(req: ImproveRequest) -> ImproveResponse:
+    """Fix grammar and typos only; do not rewrite or rephrase."""
+    ev = _EVENT_CACHE.get(req.id) if req.id else None
+    telemetry.reset()
+    proofread = await run_in_threadpool(proofread_blurb, req.text, ev)
+    return ImproveResponse(blurb=proofread)

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { generateBlurbs, improveBlurb } from "@/lib/api";
+import { generateBlurbs, improveBlurb, proofreadBlurb } from "@/lib/api";
 import { formatRangeLabel } from "@/lib/dates";
 import { useStore } from "@/lib/store";
 import { CopyField } from "@/components/CopyField";
@@ -16,6 +16,8 @@ export default function ComposePage() {
 
   const [generating, setGenerating] = useState(false);
   const [improvingId, setImprovingId] = useState<string | null>(null);
+  const [proofreadingId, setProofreadingId] = useState<string | null>(null);
+  const [proofreadIds, setProofreadIds] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +56,21 @@ export default function ComposePage() {
       setError(e instanceof Error ? e.message : "Improve failed");
     } finally {
       setImprovingId(null);
+    }
+  };
+
+  const proofread = async (ev: EventItem) => {
+    const current = blurbs[ev.id];
+    if (!current?.trim()) return;
+    setProofreadingId(ev.id);
+    setError(null);
+    try {
+      setBlurb(ev.id, await proofreadBlurb(current, ev.id));
+      setProofreadIds((prev) => prev.includes(ev.id) ? prev : [...prev, ev.id]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Proofread failed");
+    } finally {
+      setProofreadingId(null);
     }
   };
 
@@ -147,7 +164,7 @@ export default function ComposePage() {
                     className="mt-3 w-full resize-y rounded-lg border border-line bg-canvas px-3 py-2.5 text-[14px] leading-relaxed text-ink placeholder:text-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/15"
                   />
 
-                  <div className="mt-2 flex items-center gap-3">
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
                     <button
                       type="button"
                       onClick={() => improve(ev)}
@@ -156,6 +173,19 @@ export default function ComposePage() {
                     >
                       ✨ {improvingId === ev.id ? "Improving…" : "Improve writing"}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => proofread(ev)}
+                      disabled={!blurbs[ev.id]?.trim() || proofreadingId === ev.id}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-40"
+                    >
+                      {proofreadingId === ev.id ? "Proofreading…" : "Proofread"}
+                    </button>
+                    {proofreadIds.includes(ev.id) && (
+                      <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-1 text-[12px] font-medium text-green-800">
+                        ✓ Proofread
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => copyBlurb(ev)}
